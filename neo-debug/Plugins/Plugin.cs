@@ -3,7 +3,9 @@ using Neo.Network.P2P.Payloads;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading;
 
 namespace Neo.Plugins
 {
@@ -14,14 +16,16 @@ namespace Neo.Plugins
         internal static readonly List<IPolicyPlugin> Policies = new List<IPolicyPlugin>();
         internal static readonly List<IRpcPlugin> RpcPlugins = new List<IRpcPlugin>();
         internal static readonly List<IPersistencePlugin> PersistencePlugins = new List<IPersistencePlugin>();
+        internal static readonly List<IMemoryPoolTxObserverPlugin> TxObserverPlugins = new List<IMemoryPoolTxObserverPlugin>();
 
         private static readonly string pluginsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "Plugins");
         private static readonly FileSystemWatcher configWatcher;
 
+        private static int suspend = 0;
+
         protected static NeoSystem System { get; private set; }
         public virtual string Name => GetType().Name;
         public virtual Version Version => GetType().Assembly.GetName().Version;
-
         public virtual string ConfigFile => Path.Combine(pluginsPath, GetType().Assembly.GetName().Name, "config.json");
 
         static Plugin()
@@ -36,16 +40,20 @@ namespace Neo.Plugins
                 };
                 configWatcher.Changed += ConfigWatcher_Changed;
                 configWatcher.Created += ConfigWatcher_Changed;
+                AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
             }
         }
 
         protected Plugin()
         {
             Plugins.Add(this);
+
             if (this is ILogPlugin logger) Loggers.Add(logger);
             if (this is IPolicyPlugin policy) Policies.Add(policy);
             if (this is IRpcPlugin rpc) RpcPlugins.Add(rpc);
             if (this is IPersistencePlugin persistence) PersistencePlugins.Add(persistence);
+            if (this is IMemoryPoolTxObserverPlugin txObserver) TxObserverPlugins.Add(txObserver);
+
             Configure();
         }
 
@@ -58,6 +66,7 @@ namespace Neo.Plugins
         }
 
         public abstract void Configure();
+
         private static void ConfigWatcher_Changed(object sender, FileSystemEventArgs e)
         {
             foreach (var plugin in Plugins)
@@ -70,11 +79,11 @@ namespace Neo.Plugins
                 }
             }
         }
+
         protected IConfigurationSection GetConfiguration()
         {
             return new ConfigurationBuilder().AddJsonFile(ConfigFile, optional: true).Build().GetSection("PluginConfiguration");
         }
-
 
         internal static void LoadPlugins(NeoSystem system)
         {
@@ -87,12 +96,16 @@ namespace Neo.Plugins
                 {
                     if (!type.IsSubclassOf(typeof(Plugin))) continue;
                     if (type.IsAbstract) continue;
+
                     ConstructorInfo constructor = type.GetConstructor(Type.EmptyTypes);
                     try
                     {
                         constructor?.Invoke(null);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        Log(nameof(Plugin), LogLevel.Error, $"Failed to initialize plugin: {ex.Message}");
+                    }
                 }
             }
         }
@@ -110,12 +123,49 @@ namespace Neo.Plugins
 
         protected virtual bool OnMessage(object message) => false;
 
+        protected static bool ResumeNodeStartup()
+        {
+            if (Interlocked.Decrement(ref suspend) != 0)
+                return false;
+            System.ResumeNodeStartup();
+            return true;
+        }
+
         public static bool SendMessage(object message)
         {
             foreach (Plugin plugin in Plugins)
                 if (plugin.OnMessage(message))
                     return true;
             return false;
+        }
+
+        protected static void SuspendNodeStartup()
+        {
+            Interlocked.Increment(ref suspend);
+            System.SuspendNodeStartup();
+        }
+
+        private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
+        {
+            if (args.Name.Contains(".resources"))
+                return null;
+
+            Assembly assembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.FullName == args.Name);
+            if (assembly != null)
+                return assembly;
+
+            AssemblyName an = new AssemblyName(args.Name);
+            string filename = an.Name + ".dll";
+
+            try
+            {
+                return Assembly.LoadFrom(filename);
+            }
+            catch (Exception ex)
+            {
+                Log(nameof(Plugin), LogLevel.Error, $"Failed to resolve assembly or its dependency: {ex.Message}");
+                return null;
+            }
         }
     }
 }

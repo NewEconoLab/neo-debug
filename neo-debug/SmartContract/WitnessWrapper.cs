@@ -1,11 +1,13 @@
 ﻿using Neo.Network.P2P.Payloads;
 using Neo.Persistence;
 using System.Linq;
+
 namespace Neo.SmartContract
 {
-    public class WitnessWrapper
+    internal class WitnessWrapper
     {
         public byte[] VerificationScript;
+
         public static WitnessWrapper[] Create(IVerifiable verifiable, Snapshot snapshot)
         {
             WitnessWrapper[] wrappers = verifiable.Witnesses.Select(p => new WitnessWrapper

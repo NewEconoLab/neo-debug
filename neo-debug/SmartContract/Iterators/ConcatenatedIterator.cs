@@ -1,13 +1,13 @@
-﻿using Neo.VM;
+using Neo.VM;
 
-namespace Neo.SmartContract.Enumerators
+namespace Neo.SmartContract.Iterators
 {
-    internal class ConcatenatedEnumerator : IEnumerator
+    internal class ConcatenatedIterator : IIterator
     {
-        private readonly IEnumerator first, second;
-        private IEnumerator current;
+        private readonly IIterator first, second;
+        private IIterator current;
 
-        public ConcatenatedEnumerator(IEnumerator first, IEnumerator second)
+        public ConcatenatedIterator(IIterator first, IIterator second)
         {
             this.current = this.first = first;
             this.second = second;
@@ -17,6 +17,11 @@ namespace Neo.SmartContract.Enumerators
         {
             first.Dispose();
             second.Dispose();
+        }
+
+        public StackItem Key()
+        {
+            return current.Key();
         }
 
         public bool Next()

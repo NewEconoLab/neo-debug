@@ -1,8 +1,6 @@
 ﻿using Akka.Actor;
 using Akka.Configuration;
 using MongoDB.Bson;
-using NEL.Simple.SDK.Helper;
-using Neo.Cryptography;
 using Neo.Cryptography.ECC;
 using Neo.IO;
 using Neo.IO.Actors;
@@ -15,10 +13,8 @@ using Neo.Plugins;
 using Neo.SmartContract;
 using Neo.VM;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Numerics;
 using System.Threading;
 
 namespace Neo.Ledger
@@ -26,23 +22,19 @@ namespace Neo.Ledger
     public sealed class Blockchain : UntypedActor
     {
         public class Register { }
-        public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public uint BlockIndex; public bool IsLastInvocationTransaction = false; }
+        public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public UInt64 BlockIndex;public bool IsLastInvocationTransaction; }
         public class PersistCompleted { public Block Block; }
         public class Import { public IEnumerable<Block> Blocks; }
         public class ImportCompleted { }
+        public class FillMemoryPool { public IEnumerable<Transaction> Transactions; }
+        public class FillCompleted { }
 
-        public static readonly uint SecondsPerBlock = Settings.Default.SecondsPerBlock;
+        public static readonly uint SecondsPerBlock = ProtocolSettings.Default.SecondsPerBlock;
         public const uint DecrementInterval = 2000000;
-        public const uint MaxValidators = 1024;
+        public const int MaxValidators = 1024;
         public static readonly uint[] GenerationAmount = { 8, 7, 6, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-        /// <summary>
-        /// 产生每个区块的时间间隔
-        /// </summary>
         public static readonly TimeSpan TimePerBlock = TimeSpan.FromSeconds(SecondsPerBlock);
-        /// <summary>
-        /// 后备记账人列表
-        /// </summary>
-        public static readonly ECPoint[] StandbyValidators = Settings.Default.StandbyValidators.OfType<string>().Select(p => ECPoint.DecodePoint(p.HexToBytes(), ECCurve.Secp256r1)).ToArray();
+        public static readonly ECPoint[] StandbyValidators = ProtocolSettings.Default.StandbyValidators.OfType<string>().Select(p => ECPoint.DecodePoint(p.HexToBytes(), ECCurve.Secp256r1)).ToArray();
 
 #pragma warning disable CS0612
         public static readonly RegisterTransaction GoverningToken = new RegisterTransaction
@@ -122,19 +114,21 @@ namespace Neo.Ledger
                 }
             }
         };
+
+        private const int MemoryPoolMaxTransactions = 50_000;
+        private const int MaxTxToReverifyPerIdle = 10;
         private static readonly object lockObj = new object();
         private readonly NeoSystem system;
         private readonly List<UInt256> header_index = new List<UInt256>();
         private uint stored_header_count = 0;
         private readonly Dictionary<UInt256, Block> block_cache = new Dictionary<UInt256, Block>();
         private readonly Dictionary<uint, LinkedList<Block>> block_cache_unverified = new Dictionary<uint, LinkedList<Block>>();
-        private readonly MemoryPool mem_pool = new MemoryPool(50_000);
-        private readonly ConcurrentDictionary<UInt256, Transaction> mem_pool_unverified = new ConcurrentDictionary<UInt256, Transaction>();
         internal readonly RelayCache RelayCache = new RelayCache(100);
         private readonly HashSet<IActorRef> subscribers = new HashSet<IActorRef>();
         private Snapshot currentSnapshot;
 
         public Store Store { get; }
+        public MemoryPool MemPool { get; }
         public uint Height => currentSnapshot.Height;
         public uint HeaderHeight => (uint)header_index.Count - 1;
         public UInt256 CurrentBlockHash => currentSnapshot.CurrentBlockHash;
@@ -158,6 +152,7 @@ namespace Neo.Ledger
         public Blockchain(NeoSystem system, Store store)
         {
             this.system = system;
+            this.MemPool = new MemoryPool(system, MemoryPoolMaxTransactions);
             this.Store = store;
             lock (lockObj)
             {
@@ -198,7 +193,7 @@ namespace Neo.Ledger
 
         public bool ContainsTransaction(UInt256 hash)
         {
-            if (mem_pool.ContainsKey(hash)) return true;
+            if (MemPool.ContainsKey(hash)) return true;
             return Store.ContainsTransaction(hash);
         }
 
@@ -226,11 +221,6 @@ namespace Neo.Ledger
             return Contract.CreateMultiSigRedeemScript(validators.Length - (validators.Length - 1) / 3, validators).ToScriptHash();
         }
 
-        public IEnumerable<Transaction> GetMemoryPool()
-        {
-            return mem_pool;
-        }
-
         public Snapshot GetSnapshot()
         {
             return Store.GetSnapshot();
@@ -238,15 +228,9 @@ namespace Neo.Ledger
 
         public Transaction GetTransaction(UInt256 hash)
         {
-            if (mem_pool.TryGetValue(hash, out Transaction transaction))
+            if (MemPool.TryGetValue(hash, out Transaction transaction))
                 return transaction;
             return Store.GetTransaction(hash);
-        }
-
-        internal Transaction GetUnverifiedTransaction(UInt256 hash)
-        {
-            mem_pool_unverified.TryGetValue(hash, out Transaction transaction);
-            return transaction;
         }
 
         private void OnImport(IEnumerable<Block> blocks)
@@ -269,7 +253,35 @@ namespace Neo.Ledger
                 blocks = new LinkedList<Block>();
                 block_cache_unverified.Add(block.Index, blocks);
             }
+
             blocks.AddLast(block);
+        }
+
+        private void OnFillMemoryPool(IEnumerable<Transaction> transactions)
+        {
+            // Invalidate all the transactions in the memory pool, to avoid any failures when adding new transactions.
+            MemPool.InvalidateAllTransactions();
+
+            // Add the transactions to the memory pool
+            foreach (var tx in transactions)
+            {
+                if (tx.Type == TransactionType.MinerTransaction)
+                    continue;
+                if (Store.ContainsTransaction(tx.Hash))
+                    continue;
+                if (!Plugin.CheckPolicy(tx))
+                    continue;
+                // First remove the tx if it is unverified in the pool.
+                MemPool.TryRemoveUnVerified(tx.Hash, out _);
+                // Verify the the transaction
+                if (!tx.Verify(currentSnapshot, MemPool.GetVerifiedTransactions()))
+                    continue;
+                // Add to the memory pool
+                MemPool.TryAdd(tx.Hash, tx);
+            }
+            // Transactions originally in the pool will automatically be reverified based on their priority.
+
+            Sender.Tell(new FillCompleted());
         }
 
         private RelayResultReason OnNewBlock(Block block)
@@ -311,13 +323,15 @@ namespace Neo.Ledger
                     block_cache_unverified.Remove(blockToPersist.Index);
                     Persist(blockToPersist);
 
-                    if (blocksPersisted++ < blocksToPersistList.Count - 2) continue;
-                    // Relay most recent 2 blocks persisted
-                    if (blockToPersist.Index + 100 >= header_index.Count)
-                        system.LocalNode.Tell(new LocalNode.RelayDirectly { Inventory = block });
-                }
+                    if (blocksPersisted++ < blocksToPersistList.Count - (2 + Math.Max(0,(15 - SecondsPerBlock)))) continue;
+                    // Empirically calibrated for relaying the most recent 2 blocks persisted with 15s network
+                    // Increase in the rate of 1 block per second in configurations with faster blocks
 
+                    if (blockToPersist.Index + 100 >= header_index.Count)
+                        system.LocalNode.Tell(new LocalNode.RelayDirectly { Inventory = blockToPersist });
+                }
                 SaveHeaderHashList();
+
                 if (block_cache_unverified.TryGetValue(Height + 1, out LinkedList<Block> unverifiedBlocks))
                 {
                     foreach (var unverifiedBlock in unverifiedBlocks)
@@ -391,12 +405,16 @@ namespace Neo.Ledger
                 return RelayResultReason.Invalid;
             if (ContainsTransaction(transaction.Hash))
                 return RelayResultReason.AlreadyExists;
-            if (!transaction.Verify(currentSnapshot, GetMemoryPool()))
+            if (!MemPool.CanTransactionFitInPool(transaction))
+                return RelayResultReason.OutOfMemory;
+            if (!transaction.Verify(currentSnapshot, MemPool.GetVerifiedTransactions()))
                 return RelayResultReason.Invalid;
             if (!Plugin.CheckPolicy(transaction))
-                return RelayResultReason.Unknown;
-            if (!mem_pool.TryAdd(transaction.Hash, transaction))
+                return RelayResultReason.PolicyFail;
+
+            if (!MemPool.TryAdd(transaction.Hash, transaction))
                 return RelayResultReason.OutOfMemory;
+
             system.LocalNode.Tell(new LocalNode.RelayDirectly { Inventory = transaction });
             return RelayResultReason.Succeed;
         }
@@ -404,18 +422,7 @@ namespace Neo.Ledger
         private void OnPersistCompleted(Block block)
         {
             block_cache.Remove(block.Hash);
-            foreach (Transaction tx in block.Transactions)
-                mem_pool.TryRemove(tx.Hash, out _);
-            mem_pool_unverified.Clear();
-            foreach (Transaction tx in mem_pool
-                .OrderByDescending(p => p.NetworkFee / p.Size)
-                .ThenByDescending(p => p.NetworkFee)
-                .ThenByDescending(p => new BigInteger(p.Hash.ToArray())))
-            {
-                mem_pool_unverified.TryAdd(tx.Hash, tx);
-                Self.Tell(tx, ActorRefs.NoSender);
-            }
-            mem_pool.Clear();
+            MemPool.UpdatePoolForBlockPersisted(block, currentSnapshot);
             PersistCompleted completed = new PersistCompleted { Block = block };
             system.Consensus?.Tell(completed);
             Distribute(completed);
@@ -431,6 +438,9 @@ namespace Neo.Ledger
                 case Import import:
                     OnImport(import.Blocks);
                     break;
+                case FillMemoryPool fill:
+                    OnFillMemoryPool(fill.Transactions);
+                    break;
                 case Header[] headers:
                     OnNewHeaders(headers);
                     break;
@@ -442,6 +452,10 @@ namespace Neo.Ledger
                     break;
                 case ConsensusPayload payload:
                     Sender.Tell(OnNewConsensus(payload));
+                    break;
+                case Idle _:
+                    if (MemPool.ReVerifyTopUnverifiedTransactionsIfNeeded(MaxTxToReverifyPerIdle, currentSnapshot))
+                        Self.Tell(Idle.Instance, ActorRefs.NoSender);
                     break;
                 case Terminated terminated:
                     subscribers.Remove(terminated.ActorRef);
@@ -459,22 +473,14 @@ namespace Neo.Ledger
         {
             using (Snapshot snapshot = GetSnapshot())
             {
+                List<ApplicationExecuted> all_application_executed = new List<ApplicationExecuted>();
                 snapshot.PersistingBlock = block;
                 snapshot.Blocks.Add(block.Hash, new BlockState
                 {
                     SystemFeeAmount = snapshot.GetSysFeeAmount(block.PrevHash) + (long)block.Transactions.Sum(p => p.SystemFee),
                     TrimmedBlock = block.Trim()
                 });
-                Transaction lastInvocationTransaction = null;
-                for (var i = 0; i < block.Transactions.Length; i++)
-                {
-                    var tran = block.Transactions[block.Transactions.Length - 1 - i];
-                    if (tran.Type == TransactionType.InvocationTransaction)
-                    {
-                        lastInvocationTransaction = tran;
-                        break;
-                    }
-                }
+                Transaction lastTransaction = block.Transactions.Last();
                 foreach (Transaction tx in block.Transactions)
                 {
                     snapshot.Transactions.Add(tx.Hash, new TransactionState
@@ -601,7 +607,6 @@ namespace Neo.Ledger
                         case InvocationTransaction tx_invocation:
                             using (ApplicationEngine engine = new ApplicationEngine(TriggerType.Application, tx_invocation, snapshot.Clone(), tx_invocation.Gas))
                             {
-
                                 ///add log
                                 bool bLog = false;
                                 if (!(this.Store as Neo.Persistence.LevelDB.LevelDBStore).dumpInfo_onlylocal)
@@ -634,12 +639,12 @@ namespace Neo.Ledger
                                 //write dumpinfo
                                 if (bLog)
                                 {
-                                    if (!string.IsNullOrEmpty(Settings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(Settings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(Settings.Default.MongoSetting["DumpInfoColl"]))
+                                    if (!string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DumpInfoColl"]))
                                     {
                                         MyJson.JsonNode_Object data = new MyJson.JsonNode_Object();
-                                        data["txid"] =new MyJson.JsonNode_ValueString(tx.Hash.ToString());
+                                        data["txid"] = new MyJson.JsonNode_ValueString(tx.Hash.ToString());
                                         data["dimpInfo"] = new MyJson.JsonNode_ValueString(engine.DumpInfo.SaveToString());
-                                        MongoDBHelper.InsertOne(Settings.Default.MongoSetting["Conn"], Settings.Default.MongoSetting["DataBase"], Settings.Default.MongoSetting["DumpInfoColl"], BsonDocument.Parse(data.ToString()));
+                                        NEL.Simple.SDK.Helper.MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["DumpInfoColl"], MongoDB.Bson.BsonDocument.Parse(data.ToString()));
                                     }
                                     else
                                     {
@@ -648,18 +653,21 @@ namespace Neo.Ledger
                                             engine.DumpInfo.Save(filename);
                                     }
                                 }
-
                             }
                             break;
                     }
                     if (execution_results.Count > 0)
-                        Distribute(new ApplicationExecuted
+                    {
+                        ApplicationExecuted application_executed = new ApplicationExecuted
                         {
                             Transaction = tx,
                             ExecutionResults = execution_results.ToArray(),
                             BlockIndex = block.Index,
-                            IsLastInvocationTransaction = lastInvocationTransaction == null ? false : tx.Hash == lastInvocationTransaction.Hash
-                        });
+                            IsLastInvocationTransaction = tx.Hash == lastTransaction.Hash
+                        };
+                        Distribute(application_executed);
+                        all_application_executed.Add(application_executed);
+                    }
                 }
                 snapshot.BlockHashIndex.GetAndChange().Hash = block.Hash;
                 snapshot.BlockHashIndex.GetAndChange().Index = block.Index;
@@ -670,21 +678,39 @@ namespace Neo.Ledger
                     snapshot.HeaderHashIndex.GetAndChange().Index = block.Index;
                 }
                 foreach (IPersistencePlugin plugin in Plugin.PersistencePlugins)
-                    plugin.OnPersist(snapshot);
+                    plugin.OnPersist(snapshot, all_application_executed);
                 snapshot.Commit();
-
-                if (!string.IsNullOrEmpty(Settings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(Settings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(Settings.Default.MongoSetting["Block"]))
+                List<Exception> commitExceptions = null;
+                foreach (IPersistencePlugin plugin in Plugin.PersistencePlugins)
                 {
-                    //block 存入数据库
-                    MongoDBHelper.InsertOne(Settings.Default.MongoSetting["Conn"], Settings.Default.MongoSetting["DataBase"], Settings.Default.MongoSetting["Block"],BsonDocument.Parse(block.ToJson().ToString()));
-                    //更新systemcounter
-                    var json = new JObject();
-                    json["counter"] = "block";
-                    string whereFliter = json.ToString();
-                    json["lastBlockindex"] = block.Index;
-                    string replaceFliter = json.ToString();
-                    MongoDBHelper.ReplaceData(Settings.Default.MongoSetting["Conn"], Settings.Default.MongoSetting["DataBase"], "system_counter",whereFliter, MongoDB.Bson.BsonDocument.Parse(replaceFliter));
+                    try
+                    {
+                        plugin.OnCommit(snapshot);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (plugin.ShouldThrowExceptionFromCommit(ex))
+                        {
+                            if (commitExceptions == null)
+                                commitExceptions = new List<Exception>();
+
+                            commitExceptions.Add(ex);
+                        }
+                    }
                 }
+                if (commitExceptions != null) throw new AggregateException(commitExceptions);
+            }
+            if (!string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Block"]))
+            {
+                //block 存入数据库
+                NEL.Simple.SDK.Helper.MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["Block"], BsonDocument.Parse(block.ToJson().ToString()));
+                //更新systemcounter
+                var json = new JObject();
+                json["counter"] = "block";
+                string whereFliter = json.ToString();
+                json["lastBlockindex"] = block.Index;
+                string replaceFliter = json.ToString();
+                NEL.Simple.SDK.Helper.MongoDBHelper.ReplaceData(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], "system_counter", whereFliter, MongoDB.Bson.BsonDocument.Parse(replaceFliter));
             }
             UpdateCurrentSnapshot();
             OnPersistCompleted(block);

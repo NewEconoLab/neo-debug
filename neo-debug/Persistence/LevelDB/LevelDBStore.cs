@@ -23,12 +23,12 @@ namespace Neo.Persistence.LevelDB
             this.dumpInfo_onlylocal = _dumpOnlyLocal;
             this.dumpInfo_splitcount = _dumpInfo_splitcount;
             this.dumpInfo_splitindex = _dumpInfo_splitindex;
-
+            
             if (string.IsNullOrEmpty(SmartContract.Debug.DumpInfo.Path) == false)
             {
                 if (System.IO.Directory.Exists(SmartContract.Debug.DumpInfo.Path) == false)
                     System.IO.Directory.CreateDirectory(SmartContract.Debug.DumpInfo.Path);
-
+            
             }
             else
             {
@@ -54,6 +54,12 @@ namespace Neo.Persistence.LevelDB
         public void Dispose()
         {
             db.Dispose();
+        }
+        public override byte[] Get(byte prefix, byte[] key)
+        {
+            if (!db.TryGet(ReadOptions.Default, SliceBuilder.Begin(prefix).Add(key), out Slice slice))
+                return null;
+            return slice.ToArray();
         }
 
         public override DataCache<UInt160, AccountState> GetAccounts()
@@ -124,6 +130,16 @@ namespace Neo.Persistence.LevelDB
         public override MetaDataCache<HashIndexState> GetHeaderHashIndex()
         {
             return new DbMetaDataCache<HashIndexState>(db, null, null, Prefixes.IX_CurrentHeader);
+        }
+
+        public override void Put(byte prefix, byte[] key, byte[] value)
+        {
+            db.Put(WriteOptions.Default, SliceBuilder.Begin(prefix).Add(key), value);
+        }
+
+        public override void PutSync(byte prefix, byte[] key, byte[] value)
+        {
+            db.Put(new WriteOptions { Sync = true }, SliceBuilder.Begin(prefix).Add(key), value);
         }
     }
 }

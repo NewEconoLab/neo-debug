@@ -1,6 +1,6 @@
 ﻿namespace Neo.SmartContract
 {
-    public enum StackItemType : byte
+    internal enum StackItemType : byte
     {
         ByteArray = 0x00,
         Boolean = 0x01,

@@ -3,7 +3,7 @@ using System;
 
 namespace Neo.SmartContract
 {
-    public class ContainerPlaceholder : StackItem
+    internal class ContainerPlaceholder : StackItem
     {
         public StackItemType Type;
         public int ElementCount;

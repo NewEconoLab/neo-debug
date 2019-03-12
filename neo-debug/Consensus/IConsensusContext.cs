@@ -1,13 +1,15 @@
-﻿using Neo.Cryptography.ECC;
+using Neo.Cryptography.ECC;
+using Neo.IO;
 using Neo.Network.P2P.Payloads;
+using Neo.Persistence;
 using System;
 using System.Collections.Generic;
+
 namespace Neo.Consensus
 {
-    public interface IConsensusContext : IDisposable
+    public interface IConsensusContext : IDisposable, ISerializable
     {
         //public const uint Version = 0;
-        ConsensusState State { get; set; }
         UInt256 PrevHash { get; }
         uint BlockIndex { get; }
         byte ViewNumber { get; }
@@ -19,23 +21,28 @@ namespace Neo.Consensus
         UInt160 NextConsensus { get; set; }
         UInt256[] TransactionHashes { get; set; }
         Dictionary<UInt256, Transaction> Transactions { get; set; }
-        byte[][] Signatures { get; set; }
-        byte[] ExpectedView { get; set; }
-        int M { get; }
-        Header PrevHeader { get; }
-        bool TransactionExists(UInt256 hash);
-        bool VerifyTransaction(Transaction tx);
-        void ChangeView(byte view_number);
+        ConsensusPayload[] PreparationPayloads { get; set; }
+        ConsensusPayload[] CommitPayloads { get; set; }
+        ConsensusPayload[] ChangeViewPayloads { get; set; }
+        Block Block { get; set; }
+        Snapshot Snapshot { get; }
+
         Block CreateBlock();
+
         //void Dispose();
-        uint GetPrimaryIndex(byte view_number);
-        ConsensusPayload MakeChangeView();
+
+        ConsensusPayload MakeChangeView(byte newViewNumber);
+
+        ConsensusPayload MakeCommit();
+
         Block MakeHeader();
-        void SignHeader();
+
         ConsensusPayload MakePrepareRequest();
-        ConsensusPayload MakePrepareResponse(byte[] signature);
-        void Reset();
-        void Fill();
-        bool VerifyRequest();
+
+        ConsensusPayload MakeRecoveryMessage();
+
+        ConsensusPayload MakePrepareResponse();
+
+        void Reset(byte viewNumber);
     }
 }

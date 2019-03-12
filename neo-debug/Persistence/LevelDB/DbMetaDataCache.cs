@@ -43,7 +43,7 @@ namespace Neo.Persistence.LevelDB
         public override void Commit(ulong height)
         {
             base.Commit();
-            if (string.IsNullOrEmpty(Settings.Default.MongoSetting["Conn"]) || string.IsNullOrEmpty(Settings.Default.MongoSetting["DataBase"]) || string.IsNullOrEmpty(Settings.Default.MongoSetting["Task"]))
+            if (string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) || string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) || string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Task"]))
                 return;
             if (State == TrackState.None)
                 return;
@@ -53,7 +53,7 @@ namespace Neo.Persistence.LevelDB
             wbt.value = new MongoDB.Bson.BsonBinaryData(Item.ToArray());
             wbt.state = (byte)State;
             wbt.height = height;
-            MongoDBHelper.InsertOne(Settings.Default.MongoSetting["Conn"], Settings.Default.MongoSetting["DataBase"], Settings.Default.MongoSetting["Task"], wbt);
+            MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["Task"], wbt);
         }
     }
 }

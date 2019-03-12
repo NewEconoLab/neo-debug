@@ -3,7 +3,7 @@ using System;
 
 namespace Neo.SmartContract.Enumerators
 {
-    public interface IEnumerator : IDisposable
+    internal interface IEnumerator : IDisposable
     {
         bool Next();
         StackItem Value();

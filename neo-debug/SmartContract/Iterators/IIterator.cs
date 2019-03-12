@@ -3,7 +3,7 @@ using Neo.VM;
 
 namespace Neo.SmartContract.Iterators
 {
-    public interface IIterator : IEnumerator
+    internal interface IIterator : IEnumerator
     {
         StackItem Key();
     }
