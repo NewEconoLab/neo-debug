@@ -24,6 +24,7 @@ namespace Neo.Ledger
         public class Register { }
         public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public UInt64 BlockIndex;public bool IsLastInvocationTransaction; }
         public class PersistCompleted { public Block Block; }
+        public class DumpInfoExecuted { public UInt256 Hash;public string DumpInfoStr; }
         public class Import { public IEnumerable<Block> Blocks; }
         public class ImportCompleted { }
         public class FillMemoryPool { public IEnumerable<Transaction> Transactions; }
@@ -639,19 +640,14 @@ namespace Neo.Ledger
                                 //write dumpinfo
                                 if (bLog)
                                 {
-                                    if (!string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DumpInfoColl"]))
-                                    {
-                                        MyJson.JsonNode_Object data = new MyJson.JsonNode_Object();
-                                        data["txid"] = new MyJson.JsonNode_ValueString(tx.Hash.ToString());
-                                        data["dimpInfo"] = new MyJson.JsonNode_ValueString(engine.DumpInfo.SaveToString());
-                                        NEL.Simple.SDK.Helper.MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["DumpInfoColl"], MongoDB.Bson.BsonDocument.Parse(data.ToString()));
-                                    }
-                                    else
-                                    {
-                                        string filename = System.IO.Path.Combine(SmartContract.Debug.DumpInfo.Path, tx.Hash.ToString() + ".llvmhex.txt");
-                                        if (engine.DumpInfo != null)
-                                            engine.DumpInfo.Save(filename);
-                                    }
+                                    //存dumpinfo
+                                    Plugin.RecordToMongo(new DumpInfoExecuted() { Hash = tx.Hash,DumpInfoStr = engine.DumpInfo.SaveToString()});
+                                    //else
+                                    //{
+                                    //    string filename = System.IO.Path.Combine(SmartContract.Debug.DumpInfo.Path, tx.Hash.ToString() + ".llvmhex.txt");
+                                    //    if (engine.DumpInfo != null)
+                                    //        engine.DumpInfo.Save(filename);
+                                    //}
                                 }
                             }
                             break;
@@ -665,10 +661,15 @@ namespace Neo.Ledger
                             BlockIndex = block.Index,
                             IsLastInvocationTransaction = tx.Hash == lastTransaction.Hash
                         };
+
+                        //存application
+                        Plugin.RecordToMongo(application_executed);
+
                         Distribute(application_executed);
                         all_application_executed.Add(application_executed);
                     }
                 }
+
                 snapshot.BlockHashIndex.GetAndChange().Hash = block.Hash;
                 snapshot.BlockHashIndex.GetAndChange().Index = block.Index;
                 if (block.Index == header_index.Count)
@@ -677,6 +678,9 @@ namespace Neo.Ledger
                     snapshot.HeaderHashIndex.GetAndChange().Hash = block.Hash;
                     snapshot.HeaderHashIndex.GetAndChange().Index = block.Index;
                 }
+                //存block
+                Plugin.RecordToMongo(new PersistCompleted() { Block = block});
+
                 foreach (IPersistencePlugin plugin in Plugin.PersistencePlugins)
                     plugin.OnPersist(snapshot, all_application_executed);
                 snapshot.Commit();
@@ -699,18 +703,6 @@ namespace Neo.Ledger
                     }
                 }
                 if (commitExceptions != null) throw new AggregateException(commitExceptions);
-            }
-            if (!string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) && !string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Block"]))
-            {
-                //block 存入数据库
-                NEL.Simple.SDK.Helper.MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["Block"], BsonDocument.Parse(block.ToJson().ToString()));
-                //更新systemcounter
-                var json = new JObject();
-                json["counter"] = "block";
-                string whereFliter = json.ToString();
-                json["lastBlockindex"] = block.Index;
-                string replaceFliter = json.ToString();
-                NEL.Simple.SDK.Helper.MongoDBHelper.ReplaceData(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], "system_counter", whereFliter, MongoDB.Bson.BsonDocument.Parse(replaceFliter));
             }
             UpdateCurrentSnapshot();
             OnPersistCompleted(block);

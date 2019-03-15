@@ -10,7 +10,7 @@ namespace Neo.Persistence.LevelDB
 {
     public class LevelDBStore : Store, IDisposable
     {
-        private readonly DB db;
+        public readonly DB db;
 
         public int dumpInfo_splitcount;
         public int dumpInfo_splitindex;

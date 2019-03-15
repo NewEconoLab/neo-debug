@@ -33,6 +33,8 @@ namespace Neo
 
         public NeoSystem(Store store)
         {
+            Plugin.LoadNELPlugins(store);
+            Plugin.StartRestore();
             this.store = store;
             this.Blockchain = ActorSystem.ActorOf(Ledger.Blockchain.Props(this, store));
             this.LocalNode = ActorSystem.ActorOf(Network.P2P.LocalNode.Props(this));

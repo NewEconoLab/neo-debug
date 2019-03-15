@@ -57,33 +57,20 @@ namespace Neo.Persistence.LevelDB
         public override void Commit(ulong height)
         {
             base.Commit();
-            if (string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Conn"]) || string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["DataBase"]) || string.IsNullOrEmpty(ProtocolSettings.Default.MongoSetting["Task"]))
-                return;
-            WriteBatchTask wbt;
             foreach (var i in this.dictionary.Values)
             {
                 if (i.State == TrackState.None)
                     continue;
-                wbt = new WriteBatchTask();
-                wbt.tableid = prefix;
-                wbt.key = new MongoDB.Bson.BsonBinaryData(i.Key.ToArray());
-                wbt.value = new MongoDB.Bson.BsonBinaryData(i.Item.ToArray());
-                wbt.valuehash = new MongoDB.Bson.BsonBinaryData(Cryptography.Crypto.Default.Hash256(i.Item.ToArray()));
-                wbt.state = (byte)i.State;
-                wbt.height = height;
-                MongoDBHelper.InsertOne(ProtocolSettings.Default.MongoSetting["Conn"], ProtocolSettings.Default.MongoSetting["DataBase"], ProtocolSettings.Default.MongoSetting["Task"], wbt);
+                Plugins.Plugin.RecordToMongo(new WriteBatchTask
+                {
+                    tableid = prefix,
+                    key = new MongoDB.Bson.BsonBinaryData(i.Key.ToArray()),
+                    value = new MongoDB.Bson.BsonBinaryData(i.Item.ToArray()),
+                    valuehash = new MongoDB.Bson.BsonBinaryData(Cryptography.Crypto.Default.Hash256(i.Item.ToArray())),
+                    state = (byte)i.State,
+                    height = height
+                });
             }
         }
-    }
-
-    class WriteBatchTask
-    {
-        public MongoDB.Bson.ObjectId _id { get; private set; }
-        public byte tableid;
-        public MongoDB.Bson.BsonBinaryData key;
-        public MongoDB.Bson.BsonBinaryData value;
-        public MongoDB.Bson.BsonBinaryData valuehash;
-        public byte state;
-        public UInt64 height;
     }
 }

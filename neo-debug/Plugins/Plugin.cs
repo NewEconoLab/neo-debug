@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Neo.Network.P2P.Payloads;
+using Neo.Persistence;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,20 +14,25 @@ namespace Neo.Plugins
     {
         public static readonly List<Plugin> Plugins = new List<Plugin>();
         private static readonly List<ILogPlugin> Loggers = new List<ILogPlugin>();
+        private static readonly List<IRecordPlugin> Records = new List<IRecordPlugin>();
+        private static readonly List<IRestorePlugin> Restores = new List<IRestorePlugin>();
         internal static readonly List<IPolicyPlugin> Policies = new List<IPolicyPlugin>();
         internal static readonly List<IRpcPlugin> RpcPlugins = new List<IRpcPlugin>();
         internal static readonly List<IPersistencePlugin> PersistencePlugins = new List<IPersistencePlugin>();
         internal static readonly List<IMemoryPoolTxObserverPlugin> TxObserverPlugins = new List<IMemoryPoolTxObserverPlugin>();
 
         private static readonly string pluginsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "Plugins");
+        private static readonly string nelPluginsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "NEL_Plugins");
         private static readonly FileSystemWatcher configWatcher;
 
         private static int suspend = 0;
 
         protected static NeoSystem System { get; private set; }
+        protected static  Store  Store{ get; private set; }
         public virtual string Name => GetType().Name;
         public virtual Version Version => GetType().Assembly.GetName().Version;
         public virtual string ConfigFile => Path.Combine(pluginsPath, GetType().Assembly.GetName().Name, "config.json");
+        public virtual string NELConfigFile => Path.Combine(nelPluginsPath, GetType().Assembly.GetName().Name, "config.json");
 
         static Plugin()
         {
@@ -47,7 +53,8 @@ namespace Neo.Plugins
         protected Plugin()
         {
             Plugins.Add(this);
-
+            if (this is IRestorePlugin restore) Restores.Add(restore);
+            if (this is IRecordPlugin record) Records.Add(record);
             if (this is ILogPlugin logger) Loggers.Add(logger);
             if (this is IPolicyPlugin policy) Policies.Add(policy);
             if (this is IRpcPlugin rpc) RpcPlugins.Add(rpc);
@@ -65,6 +72,20 @@ namespace Neo.Plugins
             return true;
         }
 
+        public static bool RecordToMongo(object message)
+        {
+            foreach (IRecordPlugin plugin in Records)
+                plugin.Record(message);
+            return true;
+        }
+
+        public static void StartRestore()
+        {
+            foreach (IRestorePlugin plugin in Restores)
+                plugin.Restore();
+        }
+
+
         public abstract void Configure();
 
         private static void ConfigWatcher_Changed(object sender, FileSystemEventArgs e)
@@ -80,9 +101,42 @@ namespace Neo.Plugins
             }
         }
 
+        protected IConfigurationSection GetNELConfiguration()
+        {
+            return new ConfigurationBuilder().AddJsonFile(NELConfigFile, optional: true).Build().GetSection("PluginConfiguration");
+        }
+
         protected IConfigurationSection GetConfiguration()
         {
             return new ConfigurationBuilder().AddJsonFile(ConfigFile, optional: true).Build().GetSection("PluginConfiguration");
+        }
+
+        /// <summary>
+        /// 有些插件需要预先加载配置，原本的策略是先加载插件再读取配置
+        /// </summary>
+        internal static void LoadNELPlugins(Store store)
+        {
+            Store = store;
+            if (!Directory.Exists(nelPluginsPath)) return;
+            foreach (string filename in Directory.EnumerateFiles(nelPluginsPath, "*.dll", SearchOption.TopDirectoryOnly))
+            {
+                Assembly assembly = Assembly.LoadFile(filename);
+                foreach (Type type in assembly.ExportedTypes)
+                {
+                    if (!type.IsSubclassOf(typeof(Plugin))) continue;
+                    if (type.IsAbstract) continue;
+
+                    ConstructorInfo constructor = type.GetConstructor(Type.EmptyTypes);
+                    try
+                    {
+                        constructor?.Invoke(null);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log(nameof(Plugin), LogLevel.Error, $"Failed to initialize plugin: {ex.Message}");
+                    }
+                }
+            }
         }
 
         internal static void LoadPlugins(NeoSystem system)
