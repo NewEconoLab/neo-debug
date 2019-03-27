@@ -260,3 +260,4 @@ paket-files/
 __pycache__/
 *.pyc
 /neo-vm-debug/*.nuspec
+/neo-debug/*.nuspec

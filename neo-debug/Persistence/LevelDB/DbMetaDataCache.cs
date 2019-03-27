@@ -40,18 +40,22 @@ namespace Neo.Persistence.LevelDB
             batch?.Put(prefix, item.ToArray());
         }
 
-        public override void Commit(ulong height)
+        public override void Commit(ulong height,EnumDataTpye enumDataTpye = EnumDataTpye.native)
         {
             base.Commit();
             if (State == TrackState.None)
                 return;
             Plugins.Plugin.RecordToMongo(new WriteBatchTask
             {
-                tableid = prefix,
-                key = null,
-                value = new MongoDB.Bson.BsonBinaryData(Item.ToArray()),
-                state = (byte)State,
-                height = height
+                enumDataTpye = enumDataTpye,
+                writeBatchOperation = new WriteBatchOperation()
+                {
+                    tableid = prefix,
+                    key = null,
+                    value = new MongoDB.Bson.BsonBinaryData(Item.ToArray()),
+                    state = (byte)State,
+                    height = height
+                }
             });
         }
     }

@@ -60,7 +60,7 @@ namespace Neo.IO.Caching
 
         protected abstract void AddInternal(TKey key, TValue value);
 
-        public abstract void Commit(UInt64 height);
+        public abstract void Commit(UInt64 height, EnumDataTpye enumDataTpye = EnumDataTpye.native);
 
         protected virtual void Commit()
         {

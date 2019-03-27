@@ -11,7 +11,7 @@
             this.innerCache = innerCache;
         }
 
-        public override void Commit(ulong height)
+        public override void Commit(ulong height,EnumDataTpye enumDataTpye = EnumDataTpye.native)
         {
             Commit();
         }

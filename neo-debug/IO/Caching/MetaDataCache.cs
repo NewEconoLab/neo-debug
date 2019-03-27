@@ -18,7 +18,7 @@ namespace Neo.IO.Caching
             this.factory = factory;
         }
 
-        public abstract void Commit(UInt64 height);
+        public abstract void Commit(UInt64 height, EnumDataTpye enumDataTpye = EnumDataTpye.native);
 
         protected void Commit()
         {

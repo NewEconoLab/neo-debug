@@ -7,7 +7,7 @@ using NEL.Simple.SDK.Helper;
 
 namespace Neo.Persistence.LevelDB
 {
-    internal class DbCache<TKey, TValue> : DataCache<TKey, TValue>
+    public class DbCache<TKey, TValue> : DataCache<TKey, TValue>
         where TKey : IEquatable<TKey>, ISerializable, new()
         where TValue : class, ICloneable<TValue>, ISerializable, new()
     {
@@ -54,21 +54,26 @@ namespace Neo.Persistence.LevelDB
             batch?.Put(prefix, key, value);
         }
 
-        public override void Commit(ulong height)
+        public override void Commit(ulong height,EnumDataTpye enumDataTpye = EnumDataTpye.native)
         {
             base.Commit();
+
             foreach (var i in this.dictionary.Values)
             {
                 if (i.State == TrackState.None)
                     continue;
                 Plugins.Plugin.RecordToMongo(new WriteBatchTask
                 {
-                    tableid = prefix,
-                    key = new MongoDB.Bson.BsonBinaryData(i.Key.ToArray()),
-                    value = new MongoDB.Bson.BsonBinaryData(i.Item.ToArray()),
-                    valuehash = new MongoDB.Bson.BsonBinaryData(Cryptography.Crypto.Default.Hash256(i.Item.ToArray())),
-                    state = (byte)i.State,
-                    height = height
+                    enumDataTpye = enumDataTpye,
+                    writeBatchOperation = new WriteBatchOperation()
+                    {
+                        tableid = prefix,
+                        key = new MongoDB.Bson.BsonBinaryData(i.Key.ToArray()),
+                        value = new MongoDB.Bson.BsonBinaryData(i.Item.ToArray()),
+                        valuehash = new MongoDB.Bson.BsonBinaryData(Cryptography.Crypto.Default.Hash256(i.Item.ToArray())),
+                        state = (byte)i.State,
+                        height = height
+                    }
                 });
             }
         }
