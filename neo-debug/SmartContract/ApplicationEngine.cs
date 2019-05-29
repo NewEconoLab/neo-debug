@@ -31,16 +31,14 @@ namespace Neo.SmartContract
             this.snapshot = snapshot;
         }
 
-        private bool CheckDynamicInvoke(OpCode nextInstruction)
+        private bool CheckDynamicInvoke()
         {
-            switch (nextInstruction)
+            Instruction instruction = CurrentContext.CurrentInstruction;
+            switch (instruction.OpCode)
             {
                 case OpCode.APPCALL:
                 case OpCode.TAILCALL:
-                    for (int i = CurrentContext.InstructionPointer + 1; i < CurrentContext.InstructionPointer + 21; i++)
-                    {
-                        if (CurrentContext.Script[i] != 0) return true;
-                    }
+                    if (instruction.Operand.NotZero()) return true;
                     // if we get this far it is a dynamic call
                     // now look at the current executing script
                     // to determine if it can do dynamic calls
@@ -65,18 +63,13 @@ namespace Neo.SmartContract
             {
                 while (true)
                 {
-                    OpCode nextOpcode = CurrentContext.InstructionPointer >= CurrentContext.Script.Length ? OpCode.RET : CurrentContext.NextInstruction;
+                    OpCode curOpcode = CurrentContext.CurrentInstruction.OpCode;
                     if (this.DumpInfo != null)
                     {
-                        this.DumpInfo.NextOp(CurrentContext.InstructionPointer, nextOpcode);
+                        this.DumpInfo.NextOp(CurrentContext.InstructionPointer, curOpcode);
                         this.CurrentContext.EvaluationStack.ClearRecord();
                     }
-                    if (!PreStepInto(nextOpcode))
-                    {
-                        State |= VMState.FAULT;
-                        return false;
-                    }
-                    StepInto();
+                    ExecuteNext();
                     if (State.HasFlag(VMState.HALT) || State.HasFlag(VMState.FAULT))
                         break;
                     if (DumpInfo != null)
@@ -103,7 +96,7 @@ namespace Neo.SmartContract
                         {
                             result = EvaluationStackRec.PeekWithoutLog();
                         }
-                        LogResult(nextOpcode, record, result);
+                        LogResult(curOpcode, record, result);
                     }
                 }
             }
@@ -118,11 +111,11 @@ namespace Neo.SmartContract
             }
             return !State.HasFlag(VMState.FAULT);
         }
-
-        protected virtual long GetPrice(OpCode nextInstruction)
+        protected virtual long GetPrice()
         {
-            if (nextInstruction <= OpCode.NOP) return 0;
-            switch (nextInstruction)
+            Instruction instruction = CurrentContext.CurrentInstruction;
+            if (instruction.OpCode <= OpCode.NOP) return 0;
+            switch (instruction.OpCode)
             {
                 case OpCode.APPCALL:
                 case OpCode.TAILCALL:
@@ -157,14 +150,10 @@ namespace Neo.SmartContract
 
         protected virtual long GetPriceForSysCall()
         {
-            if (CurrentContext.InstructionPointer >= CurrentContext.Script.Length - 3)
-                return 1;
-            byte length = (byte)CurrentContext.Script[CurrentContext.InstructionPointer + 1];
-            if (CurrentContext.InstructionPointer > CurrentContext.Script.Length - length - 2)
-                return 1;
-            uint api_hash = length == 4
-                ? System.BitConverter.ToUInt32(CurrentContext.Script, CurrentContext.InstructionPointer + 2)
-                : Encoding.ASCII.GetString(CurrentContext.Script, CurrentContext.InstructionPointer + 2, length).ToInteropMethodHash();
+            Instruction instruction = CurrentContext.CurrentInstruction;
+            uint api_hash = instruction.Operand.Length == 4
+                ? instruction.TokenU32
+                : instruction.TokenString.ToInteropMethodHash();
             long price = Service.GetPrice(api_hash);
             if (price > 0) return price;
             if (api_hash == "Neo.Asset.Create".ToInteropMethodHash() ||
@@ -200,17 +189,17 @@ namespace Neo.SmartContract
             return 1;
         }
 
-        private bool PreStepInto(OpCode nextOpcode)
+        protected override bool PreExecuteInstruction()
         {
             if (CurrentContext.InstructionPointer >= CurrentContext.Script.Length)
                 return true;
-            gas_consumed = checked(gas_consumed + GetPrice(nextOpcode) * ratio);
+            gas_consumed = checked(gas_consumed + GetPrice() * ratio);
             if (!testMode && gas_consumed > gas_amount)
             {
                 if (DumpInfo != null) DumpInfo.Error("gas_consumed > gas_amount");
                 return false;
             }
-            if (!CheckDynamicInvoke(nextOpcode))
+            if (!CheckDynamicInvoke())
             {
                 if (DumpInfo != null) DumpInfo.Error("CheckDynamicInvoke");
                 return false;
@@ -245,12 +234,11 @@ namespace Neo.SmartContract
             engine.Execute();
             return engine;
         }
-
         public static ApplicationEngine RunWithDebug(byte[] script, IScriptContainer container = null, Block persistingBlock = null, bool testMode = false, Fixed8 extraGAS = default(Fixed8))
         {
             using (Snapshot snapshot = Blockchain.Singleton.GetSnapshot())
             {
-                return Run(script, snapshot, container, persistingBlock, testMode, extraGAS, true);
+                return Run(script, snapshot, container, persistingBlock, testMode, extraGAS);
             }
         }
 
@@ -304,7 +292,7 @@ namespace Neo.SmartContract
         public override bool CheckArraySize(int length)
         {
             var b = base.CheckArraySize(length);
-            if (!b&&DumpInfo!=null)
+            if (!b && DumpInfo != null)
             {
                 DumpInfo.Error("CheckArraySize");
             }
@@ -324,16 +312,6 @@ namespace Neo.SmartContract
         public override bool CheckBigInteger(BigInteger value)
         {
             var b = base.CheckBigInteger(value);
-            if (!b && DumpInfo != null)
-            {
-                DumpInfo.Error("CheckMaxItemSize");
-            }
-            return b;
-        }
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override bool CheckBigIntegerByteLength(int byteLength)
-        {
-            var b = base.CheckBigIntegerByteLength(byteLength);
             if (!b && DumpInfo != null)
             {
                 DumpInfo.Error("CheckMaxItemSize");

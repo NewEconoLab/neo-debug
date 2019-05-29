@@ -5,6 +5,8 @@ VisualStudioVersion = 15.0.28307.329
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "neo-debug", "neo-debug\neo-debug.csproj", "{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "neo-vm-debug", "..\neo-vm-debug\neo-vm-debug\neo-vm-debug.csproj", "{D85A34FD-682C-4B61-A333-11386BF6C904}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D85A34FD-682C-4B61-A333-11386BF6C904}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D85A34FD-682C-4B61-A333-11386BF6C904}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D85A34FD-682C-4B61-A333-11386BF6C904}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D85A34FD-682C-4B61-A333-11386BF6C904}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -132,7 +132,7 @@ namespace Neo.SmartContract
 
         protected bool ExecutionEngine_GetCallingScriptHash(ExecutionEngine engine)
         {
-            engine.CurrentContext.EvaluationStack.Push(engine.CallingContext.ScriptHash);
+            engine.CurrentContext.EvaluationStack.Push(engine.CallingContext?.ScriptHash ?? new byte[0]);
             return true;
         }
 
@@ -170,6 +170,7 @@ namespace Neo.SmartContract
         {
             byte[] hashOrPubkey = engine.CurrentContext.EvaluationStack.Pop().GetByteArray();
             bool result;
+
             if (hashOrPubkey.Length == 20)
                 result = CheckWitness(engine, new UInt160(hashOrPubkey));
             else if (hashOrPubkey.Length == 33)

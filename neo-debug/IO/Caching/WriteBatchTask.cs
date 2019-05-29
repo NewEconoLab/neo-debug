@@ -6,7 +6,8 @@ namespace Neo.IO.Caching
     {
         native,
         application,
-        nep5
+        nep5,
+        utxo
     }
 
     public class WriteBatchTask
