@@ -13,7 +13,8 @@ namespace Neo.Consensus
         PrepareResponse = 0x21,
         [ReflectionCache(typeof(Commit))]
         Commit = 0x30,
-
+        [ReflectionCache(typeof(RecoveryRequest))]
+        RecoveryRequest = 0x40,
         [ReflectionCache(typeof(RecoveryMessage))]
         RecoveryMessage = 0x41,
     }
