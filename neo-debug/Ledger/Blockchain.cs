@@ -21,7 +21,7 @@ namespace Neo.Ledger
     {
         public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public UInt64 BlockIndex; }
         public class PersistCompleted { public Block Block; }
-        public class DumpInfoExecuted { public UInt256 Hash; public string DumpInfoStr; }
+        public class DumpInfoExecuted { public UInt256 Hash; public uint BlockIndex;public string DumpInfoStr; }
         public class Import { public IEnumerable<Block> Blocks; }
         public class ImportCompleted { }
         public class FillMemoryPool { public IEnumerable<Transaction> Transactions; }
@@ -599,10 +599,6 @@ namespace Neo.Ledger
                                     engine.BeginDebug();
                                 engine.LogScript(tx_invocation.Script);
                                 engine.LoadScript(tx_invocation.Script);
-                                //if (tx_invocation.Script.ToHexString() == "14a36f7944e5bb4304ae83d137b84c4463e542138614a36f7944e5bb4304ae83d137b84c4463e54213862102883118351f8f47107c83ab634dc7e4ffe29d274e7d3dcf70159c8935ff769beb584f265b7b226c616e67223a227a682d434e222c226e616d65223a224e454f56455253494f4e227d5d016068104e656f2e41737365742e437265617465")
-                                //{
-                                //    Console.WriteLine(123);
-                                //}
                                 engine.Execute();
                                 if (!engine.State.HasFlag(VMState.FAULT))
                                 {
@@ -621,13 +617,7 @@ namespace Neo.Ledger
                                 if (bLog)
                                 {
                                     //存dumpinfo
-                                    Plugin.RecordToMongo(new DumpInfoExecuted() { Hash = tx.Hash, DumpInfoStr = engine.DumpInfo.SaveToString() });
-                                    //else
-                                    //{
-                                    //    string filename = System.IO.Path.Combine(SmartContract.Debug.DumpInfo.Path, tx.Hash.ToString() + ".llvmhex.txt");
-                                    //    if (engine.DumpInfo != null)
-                                    //        engine.DumpInfo.Save(filename);
-                                    //}
+                                    Plugin.RecordToMongo(new DumpInfoExecuted() { Hash = tx.Hash,BlockIndex = block.Index, DumpInfoStr = engine.DumpInfo.SaveToString() });
                                 }
                             }
                             break;
