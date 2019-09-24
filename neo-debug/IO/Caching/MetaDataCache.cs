@@ -1,13 +1,13 @@
-﻿using System;
+using System;
 
 namespace Neo.IO.Caching
 {
     public abstract class MetaDataCache<T>
         where T : class, ICloneable<T>, ISerializable, new()
     {
-        protected T Item;
-        protected TrackState State;
-        protected readonly Func<T> factory;
+        private T Item;
+        private TrackState State;
+        private readonly Func<T> factory;
 
         protected abstract void AddInternal(T item);
         protected abstract T TryGetInternal();
@@ -18,9 +18,7 @@ namespace Neo.IO.Caching
             this.factory = factory;
         }
 
-        public abstract void Commit(UInt64 height, EnumDataTpye enumDataTpye = EnumDataTpye.native);
-
-        protected void Commit()
+        public void Commit()
         {
             switch (State)
             {

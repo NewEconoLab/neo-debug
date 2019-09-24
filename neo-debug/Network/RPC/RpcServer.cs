@@ -23,6 +23,7 @@ using Neo.Network.P2P.Payloads;
 using Neo.Persistence;
 using Neo.Plugins;
 using Neo.SmartContract;
+using Neo.SmartContract.Native;
 using Neo.VM;
 using Neo.Wallets;
 
@@ -30,13 +31,50 @@ namespace Neo.Network.RPC
 {
     public sealed class RpcServer : IDisposable
     {
+        private class CheckWitnessHashes : IVerifiable
+        {
+            private readonly UInt160[] _scriptHashesForVerifying;
+            public Witness[] Witnesses { get; set; }
+            public int Size { get; }
+
+            public CheckWitnessHashes(UInt160[] scriptHashesForVerifying)
+            {
+                _scriptHashesForVerifying = scriptHashesForVerifying;
+            }
+
+            public void Serialize(BinaryWriter writer)
+            {
+                throw new NotImplementedException();
+            }
+
+            public void Deserialize(BinaryReader reader)
+            {
+                throw new NotImplementedException();
+            }
+
+            public void DeserializeUnsigned(BinaryReader reader)
+            {
+                throw new NotImplementedException();
+            }
+
+            public UInt160[] GetScriptHashesForVerifying(Snapshot snapshot)
+            {
+                return _scriptHashesForVerifying;
+            }
+
+            public void SerializeUnsigned(BinaryWriter writer)
+            {
+                throw new NotImplementedException();
+            }
+        }
+
         public Wallet Wallet { get; set; }
-        public Fixed8 MaxGasInvoke { get; }
+        public long MaxGasInvoke { get; }
 
         private IWebHost host;
         private readonly NeoSystem system;
 
-        public RpcServer(NeoSystem system, Wallet wallet = null, Fixed8 maxGasInvoke = default(Fixed8))
+        public RpcServer(NeoSystem system, Wallet wallet = null, long maxGasInvoke = default)
         {
             this.system = system;
             this.Wallet = wallet;
@@ -71,9 +109,9 @@ namespace Neo.Network.RPC
             }
         }
 
-        private JObject GetInvokeResult(byte[] script)
+        private JObject GetInvokeResult(byte[] script, IVerifiable checkWitnessHashes = null)
         {
-            ApplicationEngine engine = ApplicationEngine.Run(script,extraGAS: MaxGasInvoke);
+            ApplicationEngine engine = ApplicationEngine.Run(script, checkWitnessHashes, extraGAS: MaxGasInvoke);
             JObject json = new JObject();
             json["script"] = script.ToHexString();
             json["state"] = engine.State;
@@ -89,12 +127,16 @@ namespace Neo.Network.RPC
             return json;
         }
 
-        private static JObject GetRelayResult(RelayResultReason reason)
+        private static JObject GetRelayResult(RelayResultReason reason, UInt256 hash)
         {
             switch (reason)
             {
                 case RelayResultReason.Succeed:
-                    return true;
+                    {
+                        var ret = new JObject();
+                        ret["hash"] = hash.ToString();
+                        return ret;
+                    }
                 case RelayResultReason.AlreadyExists:
                     throw new RpcException(-501, "Block or transaction already exists and cannot be sent repeatedly.");
                 case RelayResultReason.OutOfMemory:
@@ -114,16 +156,6 @@ namespace Neo.Network.RPC
         {
             switch (method)
             {
-                case "getaccountstate":
-                    {
-                        UInt160 script_hash = _params[0].AsString().ToScriptHash();
-                        return GetAccountState(script_hash);
-                    }
-                case "getassetstate":
-                    {
-                        UInt256 asset_id = UInt256.Parse(_params[0].AsString());
-                        return GetAssetState(asset_id);
-                    }
                 case "getbestblockhash":
                     {
                         return GetBestBlockHash();
@@ -189,12 +221,6 @@ namespace Neo.Network.RPC
                         UInt256 hash = UInt256.Parse(_params[0].AsString());
                         return GetTransactionHeight(hash);
                     }
-                case "gettxout":
-                    {
-                        UInt256 hash = UInt256.Parse(_params[0].AsString());
-                        ushort index = ushort.Parse(_params[1].AsString());
-                        return GetTxOut(hash, index);
-                    }
                 case "getvalidators":
                     {
                         return GetValidators();
@@ -202,12 +228,6 @@ namespace Neo.Network.RPC
                 case "getversion":
                     {
                         return GetVersion();
-                    }
-                case "invoke":
-                    {
-                        UInt160 script_hash = UInt160.Parse(_params[0].AsString());
-                        ContractParameter[] parameters = ((JArray)_params[1]).Select(p => ContractParameter.FromJson(p)).ToArray();
-                        return Invoke(script_hash, parameters);
                     }
                 case "invokefunction":
                     {
@@ -219,7 +239,13 @@ namespace Neo.Network.RPC
                 case "invokescript":
                     {
                         byte[] script = _params[0].AsString().HexToBytes();
-                        return InvokeScript(script);
+                        CheckWitnessHashes checkWitnessHashes = null;
+                        if (_params.Count > 1)
+                        {
+                            UInt160[] scriptHashesForVerifying = _params.Skip(1).Select(u => UInt160.Parse(u.AsString())).ToArray();
+                            checkWitnessHashes = new CheckWitnessHashes(scriptHashesForVerifying);
+                        }
+                        return GetInvokeResult(script, checkWitnessHashes);
                     }
                 case "listplugins":
                     {
@@ -227,7 +253,7 @@ namespace Neo.Network.RPC
                     }
                 case "sendrawtransaction":
                     {
-                        Transaction tx = Transaction.DeserializeFrom(_params[0].AsString().HexToBytes());
+                        Transaction tx = _params[0].AsString().HexToBytes().AsSerializable<Transaction>();
                         return SendRawTransaction(tx);
                     }
                 case "submitblock":
@@ -398,18 +424,6 @@ namespace Neo.Network.RPC
             host.Start();
         }
 
-        private JObject GetAccountState(UInt160 script_hash)
-        {
-            AccountState account = Blockchain.Singleton.Store.GetAccounts().TryGet(script_hash) ?? new AccountState(script_hash);
-            return account.ToJson();
-        }
-
-        private JObject GetAssetState(UInt256 asset_id)
-        {
-            AssetState asset = Blockchain.Singleton.Store.GetAssets().TryGet(asset_id);
-            return asset?.ToJson() ?? throw new RpcException(-100, "Unknown asset");
-        }
-
         private JObject GetBestBlockHash()
         {
             return Blockchain.Singleton.CurrentBlockHash.ToString();
@@ -488,9 +502,10 @@ namespace Neo.Network.RPC
         private JObject GetBlockSysFee(uint height)
         {
             if (height <= Blockchain.Singleton.Height)
-            {
-                return Blockchain.Singleton.Store.GetSysFeeAmount(height).ToString();
-            }
+                using (ApplicationEngine engine = NativeContract.GAS.TestCall("getSysFeeAmount", height))
+                {
+                    return engine.ResultStack.Peek().GetBigInteger().ToString();
+                }
             throw new RpcException(-100, "Invalid Height");
         }
 
@@ -520,7 +535,7 @@ namespace Neo.Network.RPC
             {
                 JObject peerJson = new JObject();
                 peerJson["address"] = p.Remote.Address.ToString();
-                peerJson["port"] = p.ListenerPort;
+                peerJson["port"] = p.ListenerTcpPort;
                 return peerJson;
             }));
             return json;
@@ -579,17 +594,12 @@ namespace Neo.Network.RPC
             throw new RpcException(-100, "Unknown transaction");
         }
 
-        private JObject GetTxOut(UInt256 hash, ushort index)
-        {
-            return Blockchain.Singleton.Store.GetUnspent(hash, index)?.ToJson(index);
-        }
-
         private JObject GetValidators()
         {
             using (Snapshot snapshot = Blockchain.Singleton.GetSnapshot())
             {
-                var validators = snapshot.GetValidators();
-                return snapshot.GetEnrollments().Select(p =>
+                var validators = NativeContract.NEO.GetValidators(snapshot);
+                return NativeContract.NEO.GetRegisteredValidators(snapshot).Select(p =>
                 {
                     JObject validator = new JObject();
                     validator["publickey"] = p.PublicKey.ToString();
@@ -603,20 +613,11 @@ namespace Neo.Network.RPC
         private JObject GetVersion()
         {
             JObject json = new JObject();
-            json["port"] = LocalNode.Singleton.ListenerPort;
+            json["tcpPort"] = LocalNode.Singleton.ListenerTcpPort;
+            json["wsPort"] = LocalNode.Singleton.ListenerWsPort;
             json["nonce"] = LocalNode.Nonce;
             json["useragent"] = LocalNode.UserAgent;
             return json;
-        }
-
-        private JObject Invoke(UInt160 script_hash, ContractParameter[] parameters)
-        {
-            byte[] script;
-            using (ScriptBuilder sb = new ScriptBuilder())
-            {
-                script = sb.EmitAppCall(script_hash, parameters).ToArray();
-            }
-            return GetInvokeResult(script);
         }
 
         private JObject InvokeFunction(UInt160 script_hash, string operation, ContractParameter[] args)
@@ -652,13 +653,13 @@ namespace Neo.Network.RPC
         private JObject SendRawTransaction(Transaction tx)
         {
             RelayResultReason reason = system.Blockchain.Ask<RelayResultReason>(tx).Result;
-            return GetRelayResult(reason);
+            return GetRelayResult(reason, tx.Hash);
         }
 
         private JObject SubmitBlock(Block block)
         {
             RelayResultReason reason = system.Blockchain.Ask<RelayResultReason>(block).Result;
-            return GetRelayResult(reason);
+            return GetRelayResult(reason, block.Hash);
         }
 
         private JObject ValidateAddress(string address)

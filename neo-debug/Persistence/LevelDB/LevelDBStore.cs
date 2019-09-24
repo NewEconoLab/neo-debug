@@ -1,4 +1,3 @@
-﻿using Neo.Cryptography.ECC;
 using Neo.IO.Caching;
 using Neo.IO.Data.LevelDB;
 using Neo.IO.Wrappers;
@@ -10,31 +9,10 @@ namespace Neo.Persistence.LevelDB
 {
     public class LevelDBStore : Store, IDisposable
     {
-        public readonly DB db;
+        private readonly DB db;
 
-        public int dumpInfo_splitcount;
-        public int dumpInfo_splitindex;
-        public bool dumpInfo_onlylocal = false;
-
-        public LevelDBStore(string path, string dumpInfoPath = null, bool _dumpOnlyLocal = false, int _dumpInfo_splitcount = 1, int _dumpInfo_splitindex = 0)
+        public LevelDBStore(string path)
         {
-            //设置dumpinfo的一些参数
-            SmartContract.Debug.DumpInfo.Path = dumpInfoPath;
-            this.dumpInfo_onlylocal = _dumpOnlyLocal;
-            this.dumpInfo_splitcount = _dumpInfo_splitcount;
-            this.dumpInfo_splitindex = _dumpInfo_splitindex;
-            
-            if (string.IsNullOrEmpty(SmartContract.Debug.DumpInfo.Path) == false)
-            {
-                if (System.IO.Directory.Exists(SmartContract.Debug.DumpInfo.Path) == false)
-                    System.IO.Directory.CreateDirectory(SmartContract.Debug.DumpInfo.Path);
-            
-            }
-            else
-            {
-                SmartContract.Debug.DumpInfo.Path = null;
-            }
-
             this.db = DB.Open(path, new Options { CreateIfMissing = true });
             if (db.TryGet(ReadOptions.Default, SliceBuilder.Begin(Prefixes.SYS_Version), out Slice value) && Version.TryParse(value.ToString(), out Version version) && version >= Version.Parse("2.9.1"))
                 return;
@@ -55,26 +33,17 @@ namespace Neo.Persistence.LevelDB
         {
             db.Dispose();
         }
-        public override byte[] Get(byte prefix, byte[] key)
+
+        public override byte[] Get(byte[] key)
         {
-            if (!db.TryGet(ReadOptions.Default, SliceBuilder.Begin(prefix).Add(key), out Slice slice))
+            if (!db.TryGet(ReadOptions.Default, key, out Slice slice))
                 return null;
             return slice.ToArray();
         }
 
-        public override DataCache<UInt160, AccountState> GetAccounts()
+        public override DataCache<UInt256, TrimmedBlock> GetBlocks()
         {
-            return new DbCache<UInt160, AccountState>(db, null, null, Prefixes.ST_Account);
-        }
-
-        public override DataCache<UInt256, AssetState> GetAssets()
-        {
-            return new DbCache<UInt256, AssetState>(db, null, null, Prefixes.ST_Asset);
-        }
-
-        public override DataCache<UInt256, BlockState> GetBlocks()
-        {
-            return new DbCache<UInt256, BlockState>(db, null, null, Prefixes.DATA_Block);
+            return new DbCache<UInt256, TrimmedBlock>(db, null, null, Prefixes.DATA_Block);
         }
 
         public override DataCache<UInt160, ContractState> GetContracts()
@@ -87,11 +56,6 @@ namespace Neo.Persistence.LevelDB
             return new DbSnapshot(db);
         }
 
-        public override DataCache<UInt256, SpentCoinState> GetSpentCoins()
-        {
-            return new DbCache<UInt256, SpentCoinState>(db, null, null, Prefixes.ST_SpentCoin);
-        }
-
         public override DataCache<StorageKey, StorageItem> GetStorages()
         {
             return new DbCache<StorageKey, StorageItem>(db, null, null, Prefixes.ST_Storage);
@@ -102,24 +66,9 @@ namespace Neo.Persistence.LevelDB
             return new DbCache<UInt256, TransactionState>(db, null, null, Prefixes.DATA_Transaction);
         }
 
-        public override DataCache<UInt256, UnspentCoinState> GetUnspentCoins()
-        {
-            return new DbCache<UInt256, UnspentCoinState>(db, null, null, Prefixes.ST_Coin);
-        }
-
-        public override DataCache<ECPoint, ValidatorState> GetValidators()
-        {
-            return new DbCache<ECPoint, ValidatorState>(db, null, null, Prefixes.ST_Validator);
-        }
-
         public override DataCache<UInt32Wrapper, HeaderHashList> GetHeaderHashList()
         {
             return new DbCache<UInt32Wrapper, HeaderHashList>(db, null, null, Prefixes.IX_HeaderHashList);
-        }
-
-        public override MetaDataCache<ValidatorsCountState> GetValidatorsCount()
-        {
-            return new DbMetaDataCache<ValidatorsCountState>(db, null, null, Prefixes.IX_ValidatorsCount);
         }
 
         public override MetaDataCache<HashIndexState> GetBlockHashIndex()
@@ -132,14 +81,14 @@ namespace Neo.Persistence.LevelDB
             return new DbMetaDataCache<HashIndexState>(db, null, null, Prefixes.IX_CurrentHeader);
         }
 
-        public override void Put(byte prefix, byte[] key, byte[] value)
+        public override void Put(byte[] key, byte[] value)
         {
-            db.Put(WriteOptions.Default, SliceBuilder.Begin(prefix).Add(key), value);
+            db.Put(WriteOptions.Default, key, value);
         }
 
-        public override void PutSync(byte prefix, byte[] key, byte[] value)
+        public override void PutSync(byte[] key, byte[] value)
         {
-            db.Put(new WriteOptions { Sync = true }, SliceBuilder.Begin(prefix).Add(key), value);
+            db.Put(new WriteOptions { Sync = true }, key, value);
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using Neo.IO.Caching;
+using Neo.IO.Caching;
 
 namespace Neo.Consensus
 {
@@ -13,6 +13,7 @@ namespace Neo.Consensus
         PrepareResponse = 0x21,
         [ReflectionCache(typeof(Commit))]
         Commit = 0x30,
+
         [ReflectionCache(typeof(RecoveryRequest))]
         RecoveryRequest = 0x40,
         [ReflectionCache(typeof(RecoveryMessage))]

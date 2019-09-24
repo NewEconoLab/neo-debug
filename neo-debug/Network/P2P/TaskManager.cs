@@ -1,6 +1,7 @@
-﻿using Akka.Actor;
+using Akka.Actor;
 using Akka.Configuration;
 using Neo.IO.Actors;
+using Neo.IO.Caching;
 using Neo.Ledger;
 using Neo.Network.P2P.Payloads;
 using System;
@@ -24,7 +25,7 @@ namespace Neo.Network.P2P
 
         private readonly NeoSystem system;
         private const int MaxConncurrentTasks = 3;
-        private readonly HashSet<UInt256> knownHashes = new HashSet<UInt256>();
+        private readonly FIFOSet<UInt256> knownHashes;
         private readonly Dictionary<UInt256, int> globalTasks = new Dictionary<UInt256, int>();
         private readonly Dictionary<IActorRef, TaskSession> sessions = new Dictionary<IActorRef, TaskSession>();
         private readonly ICancelable timer = Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(TimerInterval, TimerInterval, Context.Self, new Timer(), ActorRefs.NoSender);
@@ -35,6 +36,7 @@ namespace Neo.Network.P2P
         public TaskManager(NeoSystem system)
         {
             this.system = system;
+            this.knownHashes = new FIFOSet<UInt256>(Blockchain.Singleton.MemPool.Capacity * 2);
         }
 
         private void OnHeaderTaskCompleted()
@@ -74,7 +76,7 @@ namespace Neo.Network.P2P
             }
 
             foreach (InvPayload group in InvPayload.CreateGroup(payload.Type, hashes.ToArray()))
-                Sender.Tell(Message.Create("getdata", group));
+                Sender.Tell(Message.Create(MessageCommand.GetData, group));
         }
 
         protected override void OnReceive(object message)
@@ -119,7 +121,7 @@ namespace Neo.Network.P2P
             foreach (UInt256 hash in payload.Hashes)
                 globalTasks.Remove(hash);
             foreach (InvPayload group in InvPayload.CreateGroup(payload.Type, payload.Hashes))
-                system.LocalNode.Tell(Message.Create("getdata", group));
+                system.LocalNode.Tell(Message.Create(MessageCommand.GetData, group));
         }
 
         private void OnTaskCompleted(UInt256 hash)
@@ -215,17 +217,17 @@ namespace Neo.Network.P2P
                     foreach (UInt256 hash in hashes)
                         session.Tasks[hash] = DateTime.UtcNow;
                     foreach (InvPayload group in InvPayload.CreateGroup(InventoryType.Block, hashes.ToArray()))
-                        session.RemoteNode.Tell(Message.Create("getdata", group));
+                        session.RemoteNode.Tell(Message.Create(MessageCommand.GetData, group));
                     return;
                 }
             }
-            if ((!HasHeaderTask || globalTasks[HeaderTaskHash] < MaxConncurrentTasks) && Blockchain.Singleton.HeaderHeight < session.Version.StartHeight)
+            if ((!HasHeaderTask || globalTasks[HeaderTaskHash] < MaxConncurrentTasks) && Blockchain.Singleton.HeaderHeight < session.StartHeight)
             {
                 session.Tasks[HeaderTaskHash] = DateTime.UtcNow;
                 IncrementGlobalTask(HeaderTaskHash);
-                session.RemoteNode.Tell(Message.Create("getheaders", GetBlocksPayload.Create(Blockchain.Singleton.CurrentHeaderHash)));
+                session.RemoteNode.Tell(Message.Create(MessageCommand.GetHeaders, GetBlocksPayload.Create(Blockchain.Singleton.CurrentHeaderHash)));
             }
-            else if (Blockchain.Singleton.Height < session.Version.StartHeight)
+            else if (Blockchain.Singleton.Height < session.StartHeight)
             {
                 UInt256 hash = Blockchain.Singleton.CurrentBlockHash;
                 for (uint i = Blockchain.Singleton.Height + 1; i <= Blockchain.Singleton.HeaderHeight; i++)
@@ -237,7 +239,7 @@ namespace Neo.Network.P2P
                         break;
                     }
                 }
-                session.RemoteNode.Tell(Message.Create("getblocks", GetBlocksPayload.Create(hash)));
+                session.RemoteNode.Tell(Message.Create(MessageCommand.GetBlocks, GetBlocksPayload.Create(hash)));
             }
         }
     }
@@ -249,7 +251,7 @@ namespace Neo.Network.P2P
         {
         }
 
-        protected override bool IsHighPriority(object message)
+        internal protected override bool IsHighPriority(object message)
         {
             switch (message)
             {

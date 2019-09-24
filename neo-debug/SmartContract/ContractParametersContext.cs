@@ -1,4 +1,4 @@
-﻿using Neo.Cryptography.ECC;
+using Neo.Cryptography.ECC;
 using Neo.IO.Json;
 using Neo.Ledger;
 using Neo.Network.P2P.Payloads;
@@ -72,7 +72,15 @@ namespace Neo.SmartContract
             }
         }
 
+        /// <summary>
+        /// Cache for public ScriptHashes field
+        /// </summary>
         private UInt160[] _ScriptHashes = null;
+
+        /// <summary>
+        /// ScriptHashes are the verifiable ScriptHashes from Verifiable element
+        /// Equivalent to: Verifiable.GetScriptHashesForVerifying(Blockchain.Singleton.GetSnapshot())
+        /// </summary>
         public IReadOnlyList<UInt160> ScriptHashes
         {
             get
@@ -102,7 +110,7 @@ namespace Neo.SmartContract
 
         public bool AddSignature(Contract contract, ECPoint pubkey, byte[] signature)
         {
-            if (contract.Script.IsMultiSigContract())
+            if (contract.Script.IsMultiSigContract(out _, out _))
             {
                 ContextItem item = CreateItem(contract);
                 if (item == null) return false;
@@ -183,8 +191,10 @@ namespace Neo.SmartContract
 
         public static ContractParametersContext FromJson(JObject json)
         {
-            IVerifiable verifiable = typeof(ContractParametersContext).GetTypeInfo().Assembly.CreateInstance(json["type"].AsString()) as IVerifiable;
-            if (verifiable == null) throw new FormatException();
+            var type = typeof(ContractParametersContext).GetTypeInfo().Assembly.GetType(json["type"].AsString());
+            if (!typeof(IVerifiable).IsAssignableFrom(type)) throw new FormatException();
+
+            var verifiable = (IVerifiable)Activator.CreateInstance(type);
             using (MemoryStream ms = new MemoryStream(json["hex"].AsString().HexToBytes(), false))
             using (BinaryReader reader = new BinaryReader(ms, Encoding.UTF8))
             {

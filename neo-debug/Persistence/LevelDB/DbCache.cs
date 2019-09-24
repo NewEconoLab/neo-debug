@@ -1,9 +1,8 @@
-﻿using Neo.IO;
+using Neo.IO;
 using Neo.IO.Caching;
 using Neo.IO.Data.LevelDB;
 using System;
 using System.Collections.Generic;
-using NEL.Simple.SDK.Helper;
 
 namespace Neo.Persistence.LevelDB
 {
@@ -52,30 +51,6 @@ namespace Neo.Persistence.LevelDB
         protected override void UpdateInternal(TKey key, TValue value)
         {
             batch?.Put(prefix, key, value);
-        }
-
-        public override void Commit(ulong height,EnumDataTpye enumDataTpye = EnumDataTpye.native)
-        {
-            base.Commit();
-
-            foreach (var i in this.dictionary.Values)
-            {
-                if (i.State == TrackState.None)
-                    continue;
-                Plugins.Plugin.RecordToMongo(new WriteBatchTask
-                {
-                    enumDataTpye = enumDataTpye,
-                    writeBatchOperation = new WriteBatchOperation()
-                    {
-                        tableid = prefix,
-                        key = new MongoDB.Bson.BsonBinaryData(i.Key.ToArray()),
-                        value = new MongoDB.Bson.BsonBinaryData(i.Item.ToArray()),
-                        valuehash = new MongoDB.Bson.BsonBinaryData(Cryptography.Crypto.Default.Hash256(i.Item.ToArray())),
-                        state = (byte)i.State,
-                        height = height
-                    }
-                });
-            }
         }
     }
 }

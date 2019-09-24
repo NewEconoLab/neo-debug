@@ -1,5 +1,4 @@
-锘縰sing Microsoft.Extensions.Configuration;
-using Neo.Network.P2P.Payloads;
+using Microsoft.Extensions.Configuration;
 using Neo.Persistence;
 using System;
 using System.Collections.Generic;
@@ -13,10 +12,8 @@ namespace Neo.Plugins
     public abstract class Plugin
     {
         public static readonly List<Plugin> Plugins = new List<Plugin>();
-        private static readonly List<ILogPlugin> Loggers = new List<ILogPlugin>();
         private static readonly List<IRecordPlugin> Records = new List<IRecordPlugin>();
-        private static readonly List<IRestorePlugin> Restores = new List<IRestorePlugin>();
-        internal static readonly List<IPolicyPlugin> Policies = new List<IPolicyPlugin>();
+        private static readonly List<ILogPlugin> Loggers = new List<ILogPlugin>();
         internal static readonly List<IRpcPlugin> RpcPlugins = new List<IRpcPlugin>();
         internal static readonly List<IPersistencePlugin> PersistencePlugins = new List<IPersistencePlugin>();
         internal static readonly List<IP2PPlugin> P2PPlugins = new List<IP2PPlugin>();
@@ -54,11 +51,9 @@ namespace Neo.Plugins
         protected Plugin()
         {
             Plugins.Add(this);
-            if (this is IRestorePlugin restore) Restores.Add(restore);
             if (this is IRecordPlugin record) Records.Add(record);
             if (this is ILogPlugin logger) Loggers.Add(logger);
             if (this is IP2PPlugin p2p) P2PPlugins.Add(p2p);
-            if (this is IPolicyPlugin policy) Policies.Add(policy);
             if (this is IRpcPlugin rpc) RpcPlugins.Add(rpc);
             if (this is IPersistencePlugin persistence) PersistencePlugins.Add(persistence);
             if (this is IMemoryPoolTxObserverPlugin txObserver) TxObserverPlugins.Add(txObserver);
@@ -66,30 +61,17 @@ namespace Neo.Plugins
             Configure();
         }
 
-        public static bool CheckPolicy(Transaction tx)
+        public abstract void Configure();
+
+        protected virtual void OnPluginsLoaded()
         {
-            foreach (IPolicyPlugin plugin in Policies)
-                if (!plugin.FilterForMemoryPool(tx))
-                    return false;
-            return true;
         }
+
         public static bool RecordToMongo(object message)
         {
             foreach (IRecordPlugin plugin in Records)
                 plugin.Record(message);
             return true;
-        }
-
-        public static void StartRestore()
-        {
-            foreach (IRestorePlugin plugin in Restores)
-                plugin.Restore();
-        }
-
-        public abstract void Configure();
-
-        protected virtual void OnPluginsLoaded()
-        {
         }
 
         private static void ConfigWatcher_Changed(object sender, FileSystemEventArgs e)
@@ -109,13 +91,14 @@ namespace Neo.Plugins
         {
             return new ConfigurationBuilder().AddJsonFile(NELConfigFile, optional: true).Build().GetSection("PluginConfiguration");
         }
+
         protected IConfigurationSection GetConfiguration()
         {
             return new ConfigurationBuilder().AddJsonFile(ConfigFile, optional: true).Build().GetSection("PluginConfiguration");
         }
 
         /// <summary>
-        /// 鏈変簺鎻掍欢闇�瑕侀鍏堝姞杞介厤缃紝鍘熸湰鐨勭瓥鐣ユ槸鍏堝姞杞芥彃浠跺啀璇诲彇閰嶇疆
+        /// 有些插件需要预先加载配置，原本的策略是先加载插件再读取配置
         /// </summary>
         internal static void LoadNELPlugins(Store store)
         {
@@ -141,13 +124,15 @@ namespace Neo.Plugins
                 }
             }
         }
+
         internal static void LoadPlugins(NeoSystem system)
         {
             System = system;
             if (!Directory.Exists(pluginsPath)) return;
             foreach (string filename in Directory.EnumerateFiles(pluginsPath, "*.dll", SearchOption.TopDirectoryOnly))
             {
-                Assembly assembly = Assembly.LoadFile(filename);
+                var file = File.ReadAllBytes(filename);
+                Assembly assembly = Assembly.Load(file);
                 foreach (Type type in assembly.ExportedTypes)
                 {
                     if (!type.IsSubclassOf(typeof(Plugin))) continue;

@@ -1,8 +1,7 @@
-﻿using Microsoft.Extensions.Configuration;
-using Neo.Network.P2P.Payloads;
+using Microsoft.Extensions.Configuration;
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace Neo
 {
@@ -12,21 +11,39 @@ namespace Neo
         public byte AddressVersion { get; }
         public string[] StandbyValidators { get; }
         public string[] SeedList { get; }
-        public IReadOnlyDictionary<TransactionType, Fixed8> SystemFee { get; }
-        public Fixed8 LowPriorityThreshold { get; }
-        public uint SecondsPerBlock { get; }
+        public uint MillisecondsPerBlock { get; }
+        public int MemoryPoolMaxTransactions { get; }
 
-        public static ProtocolSettings Default { get; }
+        static ProtocolSettings _default;
 
-        static ProtocolSettings()
+        static bool UpdateDefault(IConfiguration configuration)
         {
-            IConfigurationSection section = new ConfigurationBuilder().AddJsonFile("protocol.json", true).Build().GetSection("ProtocolConfiguration");
-            Default = new ProtocolSettings(section);
+            var settings = new ProtocolSettings(configuration.GetSection("ProtocolConfiguration"));
+            return null == Interlocked.CompareExchange(ref _default, settings, null);
+        }
+
+        public static bool Initialize(IConfiguration configuration)
+        {
+            return UpdateDefault(configuration);
+        }
+
+        public static ProtocolSettings Default
+        {
+            get
+            {
+                if (_default == null)
+                {
+                    var configuration = Helper.LoadConfig("protocol");
+                    UpdateDefault(configuration);
+                }
+
+                return _default;
+            }
         }
 
         private ProtocolSettings(IConfigurationSection section)
         {
-            this.Magic = section.GetValue("Magic", 0x746E41u);
+            this.Magic = section.GetValue("Magic", 0x4F454Eu);
             this.AddressVersion = section.GetValue("AddressVersion", (byte)0x17);
             IConfigurationSection section_sv = section.GetSection("StandbyValidators");
             if (section_sv.Exists())
@@ -54,21 +71,8 @@ namespace Neo
                     "seed4.neo.org:10333",
                     "seed5.neo.org:10333"
                 };
-            Dictionary<TransactionType, Fixed8> sys_fee = new Dictionary<TransactionType, Fixed8>
-            {
-                [TransactionType.EnrollmentTransaction] = Fixed8.FromDecimal(1000),
-                [TransactionType.IssueTransaction] = Fixed8.FromDecimal(500),
-                [TransactionType.PublishTransaction] = Fixed8.FromDecimal(500),
-                [TransactionType.RegisterTransaction] = Fixed8.FromDecimal(10000)
-            };
-            foreach (IConfigurationSection child in section.GetSection("SystemFee").GetChildren())
-            {
-                TransactionType key = (TransactionType)Enum.Parse(typeof(TransactionType), child.Key, true);
-                sys_fee[key] = Fixed8.Parse(child.Value);
-            }
-            this.SystemFee = sys_fee;
-            this.SecondsPerBlock = section.GetValue("SecondsPerBlock", 15u);
-            this.LowPriorityThreshold = Fixed8.Parse(section.GetValue("LowPriorityThreshold", "0.001"));
+            this.MillisecondsPerBlock = section.GetValue("MillisecondsPerBlock", 15000u);
+            this.MemoryPoolMaxTransactions = Math.Max(1, section.GetValue("MemoryPoolMaxTransactions", 50_000));
         }
     }
 }

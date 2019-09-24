@@ -1,9 +1,8 @@
-﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 15
-VisualStudioVersion = 15.0.28307.329
+VisualStudioVersion = 15.0.26430.15
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "neo-debug", "neo-debug\neo-debug.csproj", "{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "neo-debug", "neo-debug\neo-debug.csproj", "{0570FA01-45D4-400C-887F-C1F7FD8CB129}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,15 +10,15 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{4EB1C02D-2B20-47ED-A6C1-9479789FC57B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0570FA01-45D4-400C-887F-C1F7FD8CB129}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0570FA01-45D4-400C-887F-C1F7FD8CB129}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0570FA01-45D4-400C-887F-C1F7FD8CB129}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0570FA01-45D4-400C-887F-C1F7FD8CB129}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {4858079A-2FB5-4232-AB3E-557F3D609432}
+		SolutionGuid = {A430C121-AC08-4E13-94E9-2A1EA6CAFCB4}
 	EndGlobalSection
 EndGlobal
