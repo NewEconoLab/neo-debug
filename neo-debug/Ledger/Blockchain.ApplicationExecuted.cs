@@ -1,6 +1,7 @@
 using Neo.Network.P2P.Payloads;
 using Neo.SmartContract;
 using Neo.VM;
+using Neo.VM.Types;
 using System.Linq;
 
 namespace Neo.Ledger
@@ -10,22 +11,22 @@ namespace Neo.Ledger
         partial class ApplicationExecuted
         {
             public Transaction Transaction;
-            public uint BlockIndex;
             public TriggerType Trigger { get; internal set; }
             public VMState VMState { get; internal set; }
             public long GasConsumed { get; internal set; }
             public StackItem[] Stack { get; internal set; }
             public NotifyEventArgs[] Notifications { get; internal set; }
+            public string DumpInfo { get; internal set; }
 
             internal ApplicationExecuted(ApplicationEngine engine)
             {
-                BlockIndex = engine.Snapshot.PersistingBlock.Index;
                 Transaction = engine.ScriptContainer as Transaction;
                 Trigger = engine.Trigger;
                 VMState = engine.State;
                 GasConsumed = engine.GasConsumed;
                 Stack = engine.ResultStack.ToArray();
                 Notifications = engine.Notifications.ToArray();
+                DumpInfo = engine.DumpInfo?.SaveToString() == null?"": engine.DumpInfo?.SaveToString();
             }
         }
     }

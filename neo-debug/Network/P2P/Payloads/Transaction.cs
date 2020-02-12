@@ -1,19 +1,23 @@
 using Neo.Cryptography;
 using Neo.IO;
 using Neo.IO.Json;
+using Neo.Ledger;
 using Neo.Persistence;
 using Neo.SmartContract;
 using Neo.SmartContract.Native;
+using Neo.VM;
+using Neo.VM.Types;
 using Neo.Wallets;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using Array = Neo.VM.Types.Array;
 
 namespace Neo.Network.P2P.Payloads
 {
-    public class Transaction : IEquatable<Transaction>, IInventory
+    public class Transaction : IEquatable<Transaction>, IInventory, IInteroperable
     {
         public const int MaxTransactionSize = 102400;
         public const uint MaxValidUntilBlockIncrement = 2102400;
@@ -26,22 +30,36 @@ namespace Neo.Network.P2P.Payloads
         /// </summary>
         private const int MaxCosigners = 16;
 
-        public byte Version;
-        public uint Nonce;
-        public UInt160 Sender;
-        /// <summary>
-        /// Distributed to NEO holders.
-        /// </summary>
-        public long SystemFee;
-        /// <summary>
-        /// Distributed to consensus nodes.
-        /// </summary>
-        public long NetworkFee;
-        public uint ValidUntilBlock;
-        public TransactionAttribute[] Attributes;
-        public Cosigner[] Cosigners { get; set; }
-        public byte[] Script;
-        public Witness[] Witnesses { get; set; }
+        private byte version;
+        private uint nonce;
+        private UInt160 sender;
+        private long sysfee;
+        private long netfee;
+        private uint validUntilBlock;
+        private TransactionAttribute[] attributes;
+        private Cosigner[] cosigners;
+        private byte[] script;
+        private Witness[] witnesses;
+
+        public const int HeaderSize =
+            sizeof(byte) +  //Version
+            sizeof(uint) +  //Nonce
+            20 +            //Sender
+            sizeof(long) +  //SystemFee
+            sizeof(long) +  //NetworkFee
+            sizeof(uint);   //ValidUntilBlock
+
+        public TransactionAttribute[] Attributes
+        {
+            get => attributes;
+            set { attributes = value; _hash = null; _size = 0; }
+        }
+
+        public Cosigner[] Cosigners
+        {
+            get => cosigners;
+            set { cosigners = value; _hash = null; _size = 0; }
+        }
 
         /// <summary>
         /// The <c>NetworkFee</c> for the transaction divided by its <c>Size</c>.
@@ -56,7 +74,7 @@ namespace Neo.Network.P2P.Payloads
             {
                 if (_hash == null)
                 {
-                    _hash = new UInt256(Crypto.Default.Hash256(this.GetHashData()));
+                    _hash = new UInt256(Crypto.Hash256(this.GetHashData()));
                 }
                 return _hash;
             }
@@ -64,24 +82,86 @@ namespace Neo.Network.P2P.Payloads
 
         InventoryType IInventory.InventoryType => InventoryType.TX;
 
-        public const int HeaderSize =
-            sizeof(byte) +  //Version
-            sizeof(uint) +  //Nonce
-            20 +            //Sender
-            sizeof(long) +  //Gas
-            sizeof(long) +  //NetworkFee
-            sizeof(uint);   //ValidUntilBlock
+        /// <summary>
+        /// Distributed to consensus nodes.
+        /// </summary>
+        public long NetworkFee
+        {
+            get => netfee;
+            set { netfee = value; _hash = null; }
+        }
 
-        public int Size => HeaderSize +
-            Attributes.GetVarSize() +   //Attributes
-            Cosigners.GetVarSize() +    //Cosigners
-            Script.GetVarSize() +       //Script
-            Witnesses.GetVarSize();     //Witnesses
+        public uint Nonce
+        {
+            get => nonce;
+            set { nonce = value; _hash = null; }
+        }
+
+        public byte[] Script
+        {
+            get => script;
+            set { script = value; _hash = null; _size = 0; }
+        }
+
+        public UInt160 Sender
+        {
+            get => sender;
+            set { sender = value; _hash = null; }
+        }
+
+        private int _size;
+        public int Size
+        {
+            get
+            {
+                if (_size == 0)
+                {
+                    _size = HeaderSize +
+                        Attributes.GetVarSize() +   //Attributes
+                        Cosigners.GetVarSize() +    //Cosigners
+                        Script.GetVarSize() +       //Script
+                        Witnesses.GetVarSize();     //Witnesses
+                }
+                return _size;
+            }
+        }
+
+        /// <summary>
+        /// Distributed to NEO holders.
+        /// </summary>
+        public long SystemFee
+        {
+            get => sysfee;
+            set { sysfee = value; _hash = null; }
+        }
+
+        public uint ValidUntilBlock
+        {
+            get => validUntilBlock;
+            set { validUntilBlock = value; _hash = null; }
+        }
+
+        public byte Version
+        {
+            get => version;
+            set { version = value; _hash = null; }
+        }
+
+        public Witness[] Witnesses
+        {
+            get => witnesses;
+            set { witnesses = value; _size = 0; }
+        }
 
         void ISerializable.Deserialize(BinaryReader reader)
         {
+            int startPosition = -1;
+            if (reader.BaseStream.CanSeek)
+                startPosition = (int)reader.BaseStream.Position;
             DeserializeUnsigned(reader);
             Witnesses = reader.ReadSerializableArray<Witness>();
+            if (startPosition >= 0)
+                _size = (int)reader.BaseStream.Position - startPosition;
         }
 
         public void DeserializeUnsigned(BinaryReader reader)
@@ -121,31 +201,11 @@ namespace Neo.Network.P2P.Payloads
             return Hash.GetHashCode();
         }
 
-        public UInt160[] GetScriptHashesForVerifying(Snapshot snapshot)
+        public UInt160[] GetScriptHashesForVerifying(StoreView snapshot)
         {
             var hashes = new HashSet<UInt160> { Sender };
             hashes.UnionWith(Cosigners.Select(p => p.Account));
             return hashes.OrderBy(p => p).ToArray();
-        }
-
-        public virtual bool Reverify(Snapshot snapshot, IEnumerable<Transaction> mempool)
-        {
-            if (ValidUntilBlock <= snapshot.Height || ValidUntilBlock > snapshot.Height + MaxValidUntilBlockIncrement)
-                return false;
-            if (NativeContract.Policy.GetBlockedAccounts(snapshot).Intersect(GetScriptHashesForVerifying(snapshot)).Count() > 0)
-                return false;
-            BigInteger balance = NativeContract.GAS.BalanceOf(snapshot, Sender);
-            BigInteger fee = SystemFee + NetworkFee;
-            if (balance < fee) return false;
-            fee += mempool.Where(p => p != this && p.Sender.Equals(Sender)).Select(p => (BigInteger)(p.SystemFee + p.NetworkFee)).Sum();
-            if (balance < fee) return false;
-            UInt160[] hashes = GetScriptHashesForVerifying(snapshot);
-            for (int i = 0; i < hashes.Length; i++)
-            {
-                if (Witnesses[i].VerificationScript.Length > 0) continue;
-                if (snapshot.Contracts.TryGet(hashes[i]) is null) return false;
-            }
-            return true;
         }
 
         void ISerializable.Serialize(BinaryWriter writer)
@@ -180,7 +240,7 @@ namespace Neo.Network.P2P.Payloads
             json["valid_until_block"] = ValidUntilBlock;
             json["attributes"] = Attributes.Select(p => p.ToJson()).ToArray();
             json["cosigners"] = Cosigners.Select(p => p.ToJson()).ToArray();
-            json["script"] = Script.ToHexString();
+            json["script"] = Convert.ToBase64String(Script);
             json["witnesses"] = Witnesses.Select(p => p.ToJson()).ToArray();
             return json;
         }
@@ -196,24 +256,68 @@ namespace Neo.Network.P2P.Payloads
             tx.ValidUntilBlock = uint.Parse(json["valid_until_block"].AsString());
             tx.Attributes = ((JArray)json["attributes"]).Select(p => TransactionAttribute.FromJson(p)).ToArray();
             tx.Cosigners = ((JArray)json["cosigners"]).Select(p => Cosigner.FromJson(p)).ToArray();
-            tx.Script = json["script"].AsString().HexToBytes();
+            tx.Script = Convert.FromBase64String(json["script"].AsString());
             tx.Witnesses = ((JArray)json["witnesses"]).Select(p => Witness.FromJson(p)).ToArray();
             return tx;
         }
 
-        bool IInventory.Verify(Snapshot snapshot)
+        bool IInventory.Verify(StoreView snapshot)
         {
-            return Verify(snapshot, Enumerable.Empty<Transaction>());
+            return Verify(snapshot, BigInteger.Zero) == RelayResultReason.Succeed;
         }
 
-        public virtual bool Verify(Snapshot snapshot, IEnumerable<Transaction> mempool)
+        public virtual RelayResultReason Verify(StoreView snapshot, BigInteger totalSenderFeeFromPool)
         {
-            if (!Reverify(snapshot, mempool)) return false;
+            RelayResultReason result = VerifyForEachBlock(snapshot, totalSenderFeeFromPool);
+            if (result != RelayResultReason.Succeed) return result;
+            return VerifyParallelParts(snapshot);
+        }
+
+        public virtual RelayResultReason VerifyForEachBlock(StoreView snapshot, BigInteger totalSenderFeeFromPool)
+        {
+            if (ValidUntilBlock <= snapshot.Height || ValidUntilBlock > snapshot.Height + MaxValidUntilBlockIncrement)
+                return RelayResultReason.Expired;
+            UInt160[] hashes = GetScriptHashesForVerifying(snapshot);
+            if (NativeContract.Policy.GetBlockedAccounts(snapshot).Intersect(hashes).Any())
+                return RelayResultReason.PolicyFail;
+            BigInteger balance = NativeContract.GAS.BalanceOf(snapshot, Sender);
+            BigInteger fee = SystemFee + NetworkFee + totalSenderFeeFromPool;
+            if (balance < fee) return RelayResultReason.InsufficientFunds;
+            if (hashes.Length != Witnesses.Length) return RelayResultReason.Invalid;
+            for (int i = 0; i < hashes.Length; i++)
+            {
+                if (Witnesses[i].VerificationScript.Length > 0) continue;
+                if (snapshot.Contracts.TryGet(hashes[i]) is null) return RelayResultReason.Invalid;
+            }
+            return RelayResultReason.Succeed;
+        }
+
+        public RelayResultReason VerifyParallelParts(StoreView snapshot)
+        {
             int size = Size;
-            if (size > MaxTransactionSize) return false;
+            if (size > MaxTransactionSize) return RelayResultReason.Invalid;
             long net_fee = NetworkFee - size * NativeContract.Policy.GetFeePerByte(snapshot);
-            if (net_fee < 0) return false;
-            return this.VerifyWitnesses(snapshot, net_fee);
+            if (net_fee < 0) return RelayResultReason.InsufficientFunds;
+            if (!this.VerifyWitnesses(snapshot, net_fee)) return RelayResultReason.Invalid;
+            return RelayResultReason.Succeed;
+        }
+
+        public StackItem ToStackItem(ReferenceCounter referenceCounter)
+        {
+            return new Array(referenceCounter, new StackItem[]
+            {
+                // Computed properties
+                Hash.ToArray(),
+
+                // Transaction properties
+                (int)Version,
+                Nonce,
+                Sender.ToArray(),
+                SystemFee,
+                NetworkFee,
+                ValidUntilBlock,
+                Script,
+            });
         }
     }
 }

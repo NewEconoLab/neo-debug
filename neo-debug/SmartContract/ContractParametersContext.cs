@@ -33,12 +33,12 @@ namespace Neo.SmartContract
             {
                 return new ContextItem
                 {
-                    Script = json["script"]?.AsString().HexToBytes(),
+                    Script = Convert.FromBase64String(json["script"]?.AsString()),
                     Parameters = ((JArray)json["parameters"]).Select(p => ContractParameter.FromJson(p)).ToArray(),
                     Signatures = json["signatures"]?.Properties.Select(p => new
                     {
                         PublicKey = ECPoint.Parse(p.Key, ECCurve.Secp256r1),
-                        Signature = p.Value.AsString().HexToBytes()
+                        Signature = Convert.FromBase64String(p.Value.AsString())
                     }).ToDictionary(p => p.PublicKey, p => p.Signature)
                 };
             }
@@ -47,13 +47,13 @@ namespace Neo.SmartContract
             {
                 JObject json = new JObject();
                 if (Script != null)
-                    json["script"] = Script.ToHexString();
+                    json["script"] = Convert.ToBase64String(Script);
                 json["parameters"] = new JArray(Parameters.Select(p => p.ToJson()));
                 if (Signatures != null)
                 {
                     json["signatures"] = new JObject();
                     foreach (var signature in Signatures)
-                        json["signatures"][signature.Key.ToString()] = signature.Value.ToHexString();
+                        json["signatures"][signature.Key.ToString()] = Convert.ToBase64String(signature.Value);
                 }
                 return json;
             }
@@ -86,10 +86,19 @@ namespace Neo.SmartContract
             get
             {
                 if (_ScriptHashes == null)
-                    using (Snapshot snapshot = Blockchain.Singleton.GetSnapshot())
+                {
+                    // snapshot is not necessary for Transaction
+                    if (Verifiable is Transaction)
+                    {
+                        _ScriptHashes = Verifiable.GetScriptHashesForVerifying(null);
+                        return _ScriptHashes;
+                    }
+
+                    using (SnapshotView snapshot = Blockchain.Singleton.GetSnapshot())
                     {
                         _ScriptHashes = Verifiable.GetScriptHashesForVerifying(snapshot);
                     }
+                }
                 return _ScriptHashes;
             }
         }
@@ -105,6 +114,17 @@ namespace Neo.SmartContract
             ContextItem item = CreateItem(contract);
             if (item == null) return false;
             item.Parameters[index].Value = parameter;
+            return true;
+        }
+
+        public bool Add(Contract contract, params object[] parameters)
+        {
+            ContextItem item = CreateItem(contract);
+            if (item == null) return false;
+            for (int index = 0; index < parameters.Length; index++)
+            {
+                item.Parameters[index].Value = parameters[index];
+            }
             return true;
         }
 
@@ -124,16 +144,16 @@ namespace Neo.SmartContract
                     int i = 0;
                     switch (contract.Script[i++])
                     {
-                        case 1:
+                        case (byte)OpCode.PUSHINT8:
                             ++i;
                             break;
-                        case 2:
+                        case (byte)OpCode.PUSHINT16:
                             i += 2;
                             break;
                     }
-                    while (contract.Script[i++] == 33)
+                    while (contract.Script[i++] == (byte)OpCode.PUSHDATA1)
                     {
-                        points.Add(ECPoint.DecodePoint(contract.Script.Skip(i).Take(33).ToArray(), ECCurve.Secp256r1));
+                        points.Add(ECPoint.DecodePoint(contract.Script.AsSpan(++i, 33), ECCurve.Secp256r1));
                         i += 33;
                     }
                 }
@@ -195,7 +215,7 @@ namespace Neo.SmartContract
             if (!typeof(IVerifiable).IsAssignableFrom(type)) throw new FormatException();
 
             var verifiable = (IVerifiable)Activator.CreateInstance(type);
-            using (MemoryStream ms = new MemoryStream(json["hex"].AsString().HexToBytes(), false))
+            using (MemoryStream ms = new MemoryStream(Convert.FromBase64String(json["hex"].AsString()), false))
             using (BinaryReader reader = new BinaryReader(ms, Encoding.UTF8))
             {
                 verifiable.DeserializeUnsigned(reader);
@@ -220,6 +240,13 @@ namespace Neo.SmartContract
             return item.Parameters;
         }
 
+        public byte[] GetScript(UInt160 scriptHash)
+        {
+            if (!ContextItems.TryGetValue(scriptHash, out ContextItem item))
+                return null;
+            return item.Script;
+        }
+
         public Witness[] GetWitnesses()
         {
             if (!Completed) throw new InvalidOperationException();
@@ -229,14 +256,14 @@ namespace Neo.SmartContract
                 ContextItem item = ContextItems[ScriptHashes[i]];
                 using (ScriptBuilder sb = new ScriptBuilder())
                 {
-                    foreach (ContractParameter parameter in item.Parameters.Reverse())
+                    for (int j = item.Parameters.Length - 1; j >= 0; j--)
                     {
-                        sb.EmitPush(parameter);
+                        sb.EmitPush(item.Parameters[j]);
                     }
                     witnesses[i] = new Witness
                     {
                         InvocationScript = sb.ToArray(),
-                        VerificationScript = item.Script ?? new byte[0]
+                        VerificationScript = item.Script ?? Array.Empty<byte>()
                     };
                 }
             }
@@ -257,7 +284,7 @@ namespace Neo.SmartContract
             {
                 Verifiable.SerializeUnsigned(writer);
                 writer.Flush();
-                json["hex"] = ms.ToArray().ToHexString();
+                json["hex"] = Convert.ToBase64String(ms.ToArray());
             }
             json["items"] = new JObject();
             foreach (var item in ContextItems)

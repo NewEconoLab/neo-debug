@@ -21,7 +21,7 @@ namespace Neo.Consensus
         /// <summary>
         /// Key for saving consensus state.
         /// </summary>
-        private static readonly byte[] ConsensusStateKey = { 0xf4 };
+        private const byte ConsensusStatePrefix = 0xf4;
 
         public Block Block;
         public byte ViewNumber;
@@ -37,12 +37,16 @@ namespace Neo.Consensus
         // if this node never heard from validator i, LastSeenMessage[i] will be -1.
         public int[] LastSeenMessage;
 
-        public Snapshot Snapshot { get; private set; }
+        /// <summary>
+        /// Store all verified unsorted transactions' senders' fee currently in the consensus context.
+        /// </summary>
+        public SendersFeeMonitor SendersFeeMonitor = new SendersFeeMonitor();
+
+        public SnapshotView Snapshot { get; private set; }
         private KeyPair keyPair;
         private int _witnessSize;
         private readonly Wallet wallet;
-        private readonly Store store;
-        private readonly Random random = new Random();
+        private readonly IStore store;
 
         public int F => (Validators.Length - 1) / 3;
         public int M => Validators.Length - F;
@@ -70,7 +74,7 @@ namespace Neo.Consensus
 
         public int Size => throw new NotImplementedException();
 
-        public ConsensusContext(Wallet wallet, Store store)
+        public ConsensusContext(Wallet wallet, IStore store)
         {
             this.wallet = wallet;
             this.store = store;
@@ -78,6 +82,7 @@ namespace Neo.Consensus
 
         public Block CreateBlock()
         {
+            EnsureHeader();
             Contract contract = Contract.CreateMultiSigContract(M, Validators);
             ContractParametersContext sc = new ContractParametersContext(Block);
             for (int i = 0, j = 0; i < Validators.Length && j < M; i++)
@@ -104,21 +109,19 @@ namespace Neo.Consensus
             ViewNumber = reader.ReadByte();
             TransactionHashes = reader.ReadSerializableArray<UInt256>();
             Transaction[] transactions = reader.ReadSerializableArray<Transaction>(Block.MaxTransactionsPerBlock);
-            PreparationPayloads = new ConsensusPayload[reader.ReadVarInt(Blockchain.MaxValidators)];
-            for (int i = 0; i < PreparationPayloads.Length; i++)
-                PreparationPayloads[i] = reader.ReadBoolean() ? reader.ReadSerializable<ConsensusPayload>() : null;
-            CommitPayloads = new ConsensusPayload[reader.ReadVarInt(Blockchain.MaxValidators)];
-            for (int i = 0; i < CommitPayloads.Length; i++)
-                CommitPayloads[i] = reader.ReadBoolean() ? reader.ReadSerializable<ConsensusPayload>() : null;
-            ChangeViewPayloads = new ConsensusPayload[reader.ReadVarInt(Blockchain.MaxValidators)];
-            for (int i = 0; i < ChangeViewPayloads.Length; i++)
-                ChangeViewPayloads[i] = reader.ReadBoolean() ? reader.ReadSerializable<ConsensusPayload>() : null;
-            LastChangeViewPayloads = new ConsensusPayload[reader.ReadVarInt(Blockchain.MaxValidators)];
-            for (int i = 0; i < LastChangeViewPayloads.Length; i++)
-                LastChangeViewPayloads[i] = reader.ReadBoolean() ? reader.ReadSerializable<ConsensusPayload>() : null;
+            PreparationPayloads = reader.ReadNullableArray<ConsensusPayload>(Blockchain.MaxValidators);
+            CommitPayloads = reader.ReadNullableArray<ConsensusPayload>(Blockchain.MaxValidators);
+            ChangeViewPayloads = reader.ReadNullableArray<ConsensusPayload>(Blockchain.MaxValidators);
+            LastChangeViewPayloads = reader.ReadNullableArray<ConsensusPayload>(Blockchain.MaxValidators);
             if (TransactionHashes.Length == 0 && !RequestSentOrReceived)
                 TransactionHashes = null;
             Transactions = transactions.Length == 0 && !RequestSentOrReceived ? null : transactions.ToDictionary(p => p.Hash);
+            SendersFeeMonitor = new SendersFeeMonitor();
+            if (Transactions != null)
+            {
+                foreach (Transaction tx in Transactions.Values)
+                    SendersFeeMonitor.AddSenderFee(tx);
+            }
         }
 
         public void Dispose()
@@ -143,7 +146,7 @@ namespace Neo.Consensus
 
         public bool Load()
         {
-            byte[] data = store.Get(ConsensusStateKey);
+            byte[] data = store.TryGet(ConsensusStatePrefix, null);
             if (data is null || data.Length == 0) return false;
             using (MemoryStream ms = new MemoryStream(data, false))
             using (BinaryReader reader = new BinaryReader(ms))
@@ -254,6 +257,7 @@ namespace Neo.Consensus
             txs = txs.Take((int)maxTransactionsPerBlock);
             List<UInt256> hashes = new List<UInt256>();
             Transactions = new Dictionary<UInt256, Transaction>();
+            SendersFeeMonitor = new SendersFeeMonitor();
 
             // Expected block size
             var blockSize = GetExpectedBlockSizeWithoutTransactions(txs.Count());
@@ -267,6 +271,7 @@ namespace Neo.Consensus
 
                 hashes.Add(tx.Hash);
                 Transactions.Add(tx.Hash, tx);
+                SendersFeeMonitor.AddSenderFee(tx);
             }
 
             TransactionHashes = hashes.ToArray();
@@ -274,9 +279,10 @@ namespace Neo.Consensus
 
         public ConsensusPayload MakePrepareRequest()
         {
-            byte[] buffer = new byte[sizeof(ulong)];
+            var random = new Random();
+            Span<byte> buffer = stackalloc byte[sizeof(ulong)];
             random.NextBytes(buffer);
-            Block.ConsensusData.Nonce = BitConverter.ToUInt64(buffer, 0);
+            Block.ConsensusData.Nonce = BitConverter.ToUInt64(buffer);
             EnsureMaxBlockSize(Blockchain.Singleton.MemPool.GetSortedVerifiedTransactions());
             Block.Timestamp = Math.Max(TimeProvider.Current.UtcNow.ToTimestampMS(), PrevHeader.Timestamp + 1);
 
@@ -340,7 +346,7 @@ namespace Neo.Consensus
                 {
                     PrevHash = Snapshot.CurrentBlockHash,
                     Index = Snapshot.Height + 1,
-                    NextConsensus = Blockchain.GetConsensusAddress(NativeContract.NEO.GetValidators(Snapshot).ToArray())
+                    NextConsensus = Blockchain.GetConsensusAddress(NativeContract.NEO.GetValidators(Snapshot))
                 };
                 var pv = Validators;
                 Validators = NativeContract.NEO.GetNextBlockValidators(Snapshot);
@@ -403,7 +409,7 @@ namespace Neo.Consensus
 
         public void Save()
         {
-            store.PutSync(ConsensusStateKey, this.ToArray());
+            store.PutSync(ConsensusStatePrefix, null, this.ToArray());
         }
 
         public void Serialize(BinaryWriter writer)
@@ -416,38 +422,10 @@ namespace Neo.Consensus
             writer.Write(ViewNumber);
             writer.Write(TransactionHashes ?? new UInt256[0]);
             writer.Write(Transactions?.Values.ToArray() ?? new Transaction[0]);
-            writer.WriteVarInt(PreparationPayloads.Length);
-            foreach (var payload in PreparationPayloads)
-            {
-                bool hasPayload = !(payload is null);
-                writer.Write(hasPayload);
-                if (!hasPayload) continue;
-                writer.Write(payload);
-            }
-            writer.WriteVarInt(CommitPayloads.Length);
-            foreach (var payload in CommitPayloads)
-            {
-                bool hasPayload = !(payload is null);
-                writer.Write(hasPayload);
-                if (!hasPayload) continue;
-                writer.Write(payload);
-            }
-            writer.WriteVarInt(ChangeViewPayloads.Length);
-            foreach (var payload in ChangeViewPayloads)
-            {
-                bool hasPayload = !(payload is null);
-                writer.Write(hasPayload);
-                if (!hasPayload) continue;
-                writer.Write(payload);
-            }
-            writer.WriteVarInt(LastChangeViewPayloads.Length);
-            foreach (var payload in LastChangeViewPayloads)
-            {
-                bool hasPayload = !(payload is null);
-                writer.Write(hasPayload);
-                if (!hasPayload) continue;
-                writer.Write(payload);
-            }
+            writer.WriteNullableArray(PreparationPayloads);
+            writer.WriteNullableArray(CommitPayloads);
+            writer.WriteNullableArray(ChangeViewPayloads);
+            writer.WriteNullableArray(LastChangeViewPayloads);
         }
     }
 }

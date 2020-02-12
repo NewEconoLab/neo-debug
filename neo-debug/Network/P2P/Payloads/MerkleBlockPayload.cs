@@ -16,7 +16,7 @@ namespace Neo.Network.P2P.Payloads
 
         public static MerkleBlockPayload Create(Block block, BitArray flags)
         {
-            MerkleTree tree = new MerkleTree(new[] { block.ConsensusData.Hash }.Concat(block.Transactions.Select(p => p.Hash)).ToArray());
+            MerkleTree tree = new MerkleTree(block.Transactions.Select(p => p.Hash).Prepend(block.ConsensusData.Hash).ToArray());
             byte[] buffer = new byte[(flags.Length + 7) / 8];
             flags.CopyTo(buffer, 0);
             return new MerkleBlockPayload
@@ -37,9 +37,9 @@ namespace Neo.Network.P2P.Payloads
         public override void Deserialize(BinaryReader reader)
         {
             base.Deserialize(reader);
-            ContentCount = (int)reader.ReadVarInt(int.MaxValue);
-            Hashes = reader.ReadSerializableArray<UInt256>();
-            Flags = reader.ReadVarBytes();
+            ContentCount = (int)reader.ReadVarInt(Block.MaxTransactionsPerBlock + 1);
+            Hashes = reader.ReadSerializableArray<UInt256>(ContentCount);
+            Flags = reader.ReadVarBytes((ContentCount + 7) / 8);
         }
 
         public override void Serialize(BinaryWriter writer)

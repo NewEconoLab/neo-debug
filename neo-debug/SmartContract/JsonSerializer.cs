@@ -2,10 +2,13 @@ using Neo.IO.Json;
 using Neo.VM;
 using Neo.VM.Types;
 using System;
+using System.Collections;
+using System.IO;
 using System.Linq;
 using System.Numerics;
-using VMArray = Neo.VM.Types.Array;
-using VMBoolean = Neo.VM.Types.Boolean;
+using System.Text.Json;
+using Array = Neo.VM.Types.Array;
+using Boolean = Neo.VM.Types.Boolean;
 
 namespace Neo.SmartContract
 {
@@ -20,13 +23,13 @@ namespace Neo.SmartContract
         {
             switch (item)
             {
-                case VMArray array:
+                case Array array:
                     {
                         return array.Select(p => Serialize(p)).ToArray();
                     }
                 case ByteArray buffer:
                     {
-                        return buffer.GetString();
+                        return Convert.ToBase64String(buffer.GetSpan());
                     }
                 case Integer num:
                     {
@@ -35,9 +38,9 @@ namespace Neo.SmartContract
                             return integer.ToString();
                         return (double)num.GetBigInteger();
                     }
-                case VMBoolean boolean:
+                case Boolean boolean:
                     {
-                        return boolean.GetBoolean();
+                        return boolean.ToBoolean();
                     }
                 case Map map:
                     {
@@ -53,8 +56,78 @@ namespace Neo.SmartContract
 
                         return ret;
                     }
+                case Null _:
+                    {
+                        return JObject.Null;
+                    }
                 default: throw new FormatException();
             }
+        }
+
+        public static byte[] SerializeToByteArray(StackItem item, uint maxSize)
+        {
+            using MemoryStream ms = new MemoryStream();
+            using Utf8JsonWriter writer = new Utf8JsonWriter(ms, new JsonWriterOptions
+            {
+                Indented = false,
+                SkipValidation = false
+            });
+            Stack stack = new Stack();
+            stack.Push(item);
+            while (stack.Count > 0)
+            {
+                switch (stack.Pop())
+                {
+                    case Array array:
+                        writer.WriteStartArray();
+                        stack.Push(JsonTokenType.EndArray);
+                        for (int i = array.Count - 1; i >= 0; i--)
+                            stack.Push(array[i]);
+                        break;
+                    case JsonTokenType.EndArray:
+                        writer.WriteEndArray();
+                        break;
+                    case ByteArray buffer:
+                        writer.WriteStringValue(Convert.ToBase64String(buffer.GetSpan()));
+                        break;
+                    case Integer num:
+                        {
+                            var integer = num.GetBigInteger();
+                            if (integer > JNumber.MAX_SAFE_INTEGER || integer < JNumber.MIN_SAFE_INTEGER)
+                                throw new InvalidOperationException();
+                            writer.WriteNumberValue((double)num.GetBigInteger());
+                            break;
+                        }
+                    case Boolean boolean:
+                        writer.WriteBooleanValue(boolean.ToBoolean());
+                        break;
+                    case Map map:
+                        writer.WriteStartObject();
+                        stack.Push(JsonTokenType.EndObject);
+                        foreach (var pair in map.Reverse())
+                        {
+                            stack.Push(pair.Value);
+                            stack.Push(pair.Key);
+                            stack.Push(JsonTokenType.PropertyName);
+                        }
+                        break;
+                    case JsonTokenType.EndObject:
+                        writer.WriteEndObject();
+                        break;
+                    case JsonTokenType.PropertyName:
+                        writer.WritePropertyName(((PrimitiveType)stack.Pop()).GetSpan());
+                        break;
+                    case Null _:
+                        writer.WriteNullValue();
+                        break;
+                    default:
+                        throw new InvalidOperationException();
+                }
+                if (ms.Position > maxSize) throw new InvalidOperationException();
+            }
+            writer.Flush();
+            if (ms.Position > maxSize) throw new InvalidOperationException();
+            return ms.ToArray();
         }
 
         /// <summary>
@@ -62,13 +135,17 @@ namespace Neo.SmartContract
         /// </summary>
         /// <param name="json">Json</param>
         /// <returns>Return stack item</returns>
-        public static StackItem Deserialize(JObject json)
+        public static StackItem Deserialize(JObject json, ReferenceCounter referenceCounter = null)
         {
             switch (json)
             {
+                case null:
+                    {
+                        return StackItem.Null;
+                    }
                 case JArray array:
                     {
-                        return array.Select(p => Deserialize(p)).ToList();
+                        return new Array(referenceCounter, array.Select(p => Deserialize(p, referenceCounter)));
                     }
                 case JString str:
                     {
@@ -82,18 +159,18 @@ namespace Neo.SmartContract
                     }
                 case JBoolean boolean:
                     {
-                        return new VMBoolean(boolean.Value);
+                        return new Boolean(boolean.Value);
                     }
                 case JObject obj:
                     {
-                        var item = new Map();
+                        var item = new Map(referenceCounter);
 
                         foreach (var entry in obj.Properties)
                         {
                             var key = entry.Key;
-                            var value = Deserialize(entry.Value);
+                            var value = Deserialize(entry.Value, referenceCounter);
 
-                            item.Add(key, value);
+                            item[key] = value;
                         }
 
                         return item;

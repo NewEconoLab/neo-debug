@@ -1,4 +1,4 @@
-using Neo.VM;
+using Neo.VM.Types;
 using System;
 using System.Collections.Generic;
 
@@ -6,10 +6,10 @@ namespace Neo.SmartContract.Iterators
 {
     internal class ArrayWrapper : IIterator
     {
-        private readonly IList<StackItem> array;
+        private readonly IReadOnlyList<StackItem> array;
         private int index = -1;
 
-        public ArrayWrapper(IList<StackItem> array)
+        public ArrayWrapper(IReadOnlyList<StackItem> array)
         {
             this.array = array;
         }
@@ -18,7 +18,7 @@ namespace Neo.SmartContract.Iterators
         {
         }
 
-        public StackItem Key()
+        public PrimitiveType Key()
         {
             if (index < 0)
                 throw new InvalidOperationException();

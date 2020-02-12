@@ -2,11 +2,15 @@ using Neo.IO;
 using Neo.IO.Json;
 using Neo.SmartContract;
 using Neo.SmartContract.Manifest;
+using Neo.VM;
+using Neo.VM.Types;
+using System;
 using System.IO;
+using Array = Neo.VM.Types.Array;
 
 namespace Neo.Ledger
 {
-    public class ContractState : ICloneable<ContractState>, ISerializable
+    public class ContractState : ICloneable<ContractState>, ISerializable, IInteroperable
     {
         public byte[] Script;
         public ContractManifest Manifest;
@@ -60,7 +64,7 @@ namespace Neo.Ledger
         {
             JObject json = new JObject();
             json["hash"] = ScriptHash.ToString();
-            json["script"] = Script.ToHexString();
+            json["script"] = Convert.ToBase64String(Script);
             json["manifest"] = Manifest.ToJson();
             return json;
         }
@@ -68,9 +72,14 @@ namespace Neo.Ledger
         public static ContractState FromJson(JObject json)
         {
             ContractState contractState = new ContractState();
-            contractState.Script = json["script"].AsString().HexToBytes();
+            contractState.Script = Convert.FromBase64String(json["script"].AsString());
             contractState.Manifest = ContractManifest.FromJson(json["manifest"]);
             return contractState;
+        }
+
+        public StackItem ToStackItem(ReferenceCounter referenceCounter)
+        {
+            return new Array(referenceCounter, new StackItem[] { Script, HasStorage, Payable });
         }
     }
 }

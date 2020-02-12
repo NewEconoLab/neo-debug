@@ -5,11 +5,12 @@ using Neo.Ledger;
 using Neo.SmartContract.Manifest;
 using Neo.SmartContract.Native.Tokens;
 using Neo.VM;
+using Neo.VM.Types;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using VMArray = Neo.VM.Types.Array;
+using Array = Neo.VM.Types.Array;
 
 namespace Neo.SmartContract.Native
 {
@@ -56,12 +57,13 @@ namespace Neo.SmartContract.Native
                 if (attribute.SafeMethod) safeMethods.Add(name);
                 methods.Add(name, new ContractMethodMetadata
                 {
-                    Delegate = (Func<ApplicationEngine, VMArray, StackItem>)method.CreateDelegate(typeof(Func<ApplicationEngine, VMArray, StackItem>), this),
-                    Price = attribute.Price
+                    Delegate = (Func<ApplicationEngine, Array, StackItem>)method.CreateDelegate(typeof(Func<ApplicationEngine, Array, StackItem>), this),
+                    Price = attribute.Price,
+                    RequiredCallFlags = attribute.SafeMethod ? CallFlags.None : CallFlags.AllowModifyStates
                 });
             }
             this.Manifest.Abi.Methods = descriptors.ToArray();
-            this.Manifest.SafeMethods = WildCardContainer<string>.Create(safeMethods.ToArray());
+            this.Manifest.SafeMethods = WildcardContainer<string>.Create(safeMethods.ToArray());
             contracts.Add(this);
         }
 
@@ -73,8 +75,7 @@ namespace Neo.SmartContract.Native
                 Key = new byte[sizeof(byte) + (key?.Length ?? 0)]
             };
             storageKey.Key[0] = prefix;
-            if (key != null)
-                Buffer.BlockCopy(key, 0, storageKey.Key, 1, key.Length);
+            key?.CopyTo(storageKey.Key.AsSpan(1));
             return storageKey;
         }
 
@@ -88,15 +89,18 @@ namespace Neo.SmartContract.Native
             if (!engine.CurrentScriptHash.Equals(Hash))
                 return false;
             string operation = engine.CurrentContext.EvaluationStack.Pop().GetString();
-            VMArray args = (VMArray)engine.CurrentContext.EvaluationStack.Pop();
+            Array args = (Array)engine.CurrentContext.EvaluationStack.Pop();
             if (!methods.TryGetValue(operation, out ContractMethodMetadata method))
+                return false;
+            ExecutionContextState state = engine.CurrentContext.GetState<ExecutionContextState>();
+            if (!state.CallFlags.HasFlag(method.RequiredCallFlags))
                 return false;
             StackItem result = method.Delegate(engine, args);
             engine.CurrentContext.EvaluationStack.Push(result);
             return true;
         }
 
-        internal long GetPrice(RandomAccessStack<StackItem> stack)
+        internal long GetPrice(EvaluationStack stack)
         {
             return methods.TryGetValue(stack.Peek().GetString(), out ContractMethodMetadata method) ? method.Price : 0;
         }
@@ -109,7 +113,7 @@ namespace Neo.SmartContract.Native
         }
 
         [ContractMethod(0, ContractParameterType.Boolean)]
-        protected StackItem OnPersist(ApplicationEngine engine, VMArray args)
+        protected StackItem OnPersist(ApplicationEngine engine, Array args)
         {
             if (engine.Trigger != TriggerType.System) return false;
             return OnPersist(engine);
@@ -121,9 +125,9 @@ namespace Neo.SmartContract.Native
         }
 
         [ContractMethod(0, ContractParameterType.Array, Name = "supportedStandards", SafeMethod = true)]
-        protected StackItem SupportedStandardsMethod(ApplicationEngine engine, VMArray args)
+        protected StackItem SupportedStandardsMethod(ApplicationEngine engine, Array args)
         {
-            return SupportedStandards.Select(p => (StackItem)p).ToList();
+            return new Array(engine.ReferenceCounter, SupportedStandards.Select(p => (StackItem)p));
         }
 
         public ApplicationEngine TestCall(string operation, params object[] args)

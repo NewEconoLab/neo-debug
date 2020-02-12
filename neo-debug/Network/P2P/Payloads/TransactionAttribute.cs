@@ -30,15 +30,17 @@ namespace Neo.Network.P2P.Payloads
         {
             JObject json = new JObject();
             json["usage"] = Usage;
-            json["data"] = Data.ToHexString();
+            json["data"] = Convert.ToBase64String(Data);
             return json;
         }
 
         public static TransactionAttribute FromJson(JObject json)
         {
             TransactionAttribute transactionAttribute = new TransactionAttribute();
-            transactionAttribute.Usage = (TransactionAttributeUsage)(byte.Parse(json["usage"].AsString()));
-            transactionAttribute.Data = json["data"].AsString().HexToBytes();
+            transactionAttribute.Usage = (TransactionAttributeUsage)byte.Parse(json["usage"].AsString());
+            if (!Enum.IsDefined(typeof(TransactionAttributeUsage), transactionAttribute.Usage))
+                throw new ArgumentException();
+            transactionAttribute.Data = Convert.FromBase64String(json["data"].AsString());
             return transactionAttribute;
         }
     }

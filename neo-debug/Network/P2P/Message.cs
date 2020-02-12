@@ -1,8 +1,9 @@
 using Akka.IO;
 using Neo.Cryptography;
 using Neo.IO;
-using Neo.Network.P2P.Payloads;
+using Neo.IO.Caching;
 using System;
+using System.Buffers.Binary;
 using System.IO;
 
 namespace Neo.Network.P2P
@@ -13,6 +14,10 @@ namespace Neo.Network.P2P
         private const int CompressionMinSize = 128;
         private const int CompressionThreshold = 64;
 
+        /// <summary>
+        /// Flags that represents whether a message is compressed.
+        /// 0 for None, 1 for Compressed.
+        /// </summary>
         public MessageFlags Flags;
         public MessageCommand Command;
         public ISerializable Payload;
@@ -28,7 +33,7 @@ namespace Neo.Network.P2P
                 Flags = MessageFlags.None,
                 Command = command,
                 Payload = payload,
-                _payload_compressed = payload?.ToArray() ?? new byte[0]
+                _payload_compressed = payload?.ToArray() ?? Array.Empty<byte>()
             };
 
             // Try compression
@@ -51,48 +56,7 @@ namespace Neo.Network.P2P
             byte[] decompressed = Flags.HasFlag(MessageFlags.Compressed)
                 ? _payload_compressed.DecompressLz4(PayloadMaxSize)
                 : _payload_compressed;
-            switch (Command)
-            {
-                case MessageCommand.Version:
-                    Payload = decompressed.AsSerializable<VersionPayload>();
-                    break;
-                case MessageCommand.Addr:
-                    Payload = decompressed.AsSerializable<AddrPayload>();
-                    break;
-                case MessageCommand.Ping:
-                case MessageCommand.Pong:
-                    Payload = decompressed.AsSerializable<PingPayload>();
-                    break;
-                case MessageCommand.GetHeaders:
-                case MessageCommand.GetBlocks:
-                    Payload = decompressed.AsSerializable<GetBlocksPayload>();
-                    break;
-                case MessageCommand.Headers:
-                    Payload = decompressed.AsSerializable<HeadersPayload>();
-                    break;
-                case MessageCommand.Inv:
-                case MessageCommand.GetData:
-                    Payload = decompressed.AsSerializable<InvPayload>();
-                    break;
-                case MessageCommand.Transaction:
-                    Payload = decompressed.AsSerializable<Transaction>();
-                    break;
-                case MessageCommand.Block:
-                    Payload = decompressed.AsSerializable<Block>();
-                    break;
-                case MessageCommand.Consensus:
-                    Payload = decompressed.AsSerializable<ConsensusPayload>();
-                    break;
-                case MessageCommand.FilterLoad:
-                    Payload = decompressed.AsSerializable<FilterLoadPayload>();
-                    break;
-                case MessageCommand.FilterAdd:
-                    Payload = decompressed.AsSerializable<FilterAddPayload>();
-                    break;
-                case MessageCommand.MerkleBlock:
-                    Payload = decompressed.AsSerializable<MerkleBlockPayload>();
-                    break;
-            }
+            Payload = ReflectionCache<MessageCommand>.CreateSerializable(Command, decompressed);
         }
 
         void ISerializable.Deserialize(BinaryReader reader)
@@ -123,19 +87,19 @@ namespace Neo.Network.P2P
             if (length == 0xFD)
             {
                 if (data.Count < 5) return 0;
-                length = data.Slice(payloadIndex, 2).ToArray().ToUInt16(0);
+                length = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(payloadIndex, 2).ToArray());
                 payloadIndex += 2;
             }
             else if (length == 0xFE)
             {
                 if (data.Count < 7) return 0;
-                length = data.Slice(payloadIndex, 4).ToArray().ToUInt32(0);
+                length = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(payloadIndex, 4).ToArray());
                 payloadIndex += 4;
             }
             else if (length == 0xFF)
             {
                 if (data.Count < 11) return 0;
-                length = data.Slice(payloadIndex, 8).ToArray().ToUInt64(0);
+                length = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(payloadIndex, 8).ToArray());
                 payloadIndex += 8;
             }
 
@@ -147,7 +111,7 @@ namespace Neo.Network.P2P
             {
                 Flags = flags,
                 Command = (MessageCommand)header[1],
-                _payload_compressed = length <= 0 ? new byte[0] : data.Slice(payloadIndex, (int)length).ToArray()
+                _payload_compressed = length <= 0 ? Array.Empty<byte>() : data.Slice(payloadIndex, (int)length).ToArray()
             };
             msg.DecompressPayload();
 

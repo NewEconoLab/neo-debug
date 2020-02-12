@@ -17,8 +17,7 @@ namespace Neo.Ledger
     public class MemoryPool : IReadOnlyCollection<Transaction>
     {
         // Allow a reverified transaction to be rebroadcasted if it has been this many block times since last broadcast.
-        private const int BlocksTillRebroadcastLowPriorityPoolTx = 30;
-        private const int BlocksTillRebroadcastHighPriorityPoolTx = 10;
+        private const int BlocksTillRebroadcast = 10;
         private int RebroadcastMultiplierThreshold => Capacity / 10;
 
         private static readonly double MaxMillisecondsToReverifyTx = (double)Blockchain.MillisecondsPerBlock / 3;
@@ -70,6 +69,11 @@ namespace Neo.Ledger
         public int Capacity { get; }
 
         /// <summary>
+        /// Store all verified unsorted transactions' senders' fee currently in the memory pool.
+        /// </summary>
+        public SendersFeeMonitor SendersFeeMonitor = new SendersFeeMonitor();
+
+        /// <summary>
         /// Total count of transactions in the pool.
         /// </summary>
         public int Count
@@ -101,7 +105,7 @@ namespace Neo.Ledger
             Capacity = capacity;
         }
 
-        internal bool LoadPolicy(Snapshot snapshot)
+        internal bool LoadPolicy(StoreView snapshot)
         {
             _maxTxPerBlock = (int)NativeContract.Policy.GetMaxTransactionsPerBlock(snapshot);
             long newFeePerByte = NativeContract.Policy.GetFeePerByte(snapshot);
@@ -268,6 +272,7 @@ namespace Neo.Ledger
             try
             {
                 _unsortedTransactions.Add(hash, poolItem);
+                SendersFeeMonitor.AddSenderFee(tx);
                 _sortedTransactions.Add(poolItem);
 
                 if (Count > Capacity)
@@ -310,6 +315,7 @@ namespace Neo.Ledger
                 return false;
 
             _unsortedTransactions.Remove(hash);
+            SendersFeeMonitor.RemoveSenderFee(item.Tx);
             _sortedTransactions.Remove(item);
 
             return true;
@@ -337,11 +343,12 @@ namespace Neo.Ledger
 
             // Clear the verified transactions now, since they all must be reverified.
             _unsortedTransactions.Clear();
+            SendersFeeMonitor = new SendersFeeMonitor();
             _sortedTransactions.Clear();
         }
 
         // Note: this must only be called from a single thread (the Blockchain actor)
-        internal void UpdatePoolForBlockPersisted(Block block, Snapshot snapshot)
+        internal void UpdatePoolForBlockPersisted(Block block, StoreView snapshot)
         {
             bool policyChanged = LoadPolicy(snapshot);
 
@@ -365,11 +372,11 @@ namespace Neo.Ledger
                         if (item.Tx.FeePerByte >= _feePerByte)
                             tx.Add(item.Tx);
 
-                    if (tx.Count > 0)
-                        _system.Blockchain.Tell(tx.ToArray(), ActorRefs.NoSender);
-
                     _unverifiedTransactions.Clear();
                     _unverifiedSortedTransactions.Clear();
+
+                    if (tx.Count > 0)
+                        _system.Blockchain.Tell(tx.ToArray(), ActorRefs.NoSender);
                 }
             }
             finally
@@ -400,7 +407,7 @@ namespace Neo.Ledger
         }
 
         private int ReverifyTransactions(SortedSet<PoolItem> verifiedSortedTxPool,
-            SortedSet<PoolItem> unverifiedSortedTxPool, int count, double millisecondsTimeout, Snapshot snapshot)
+            SortedSet<PoolItem> unverifiedSortedTxPool, int count, double millisecondsTimeout, StoreView snapshot)
         {
             DateTime reverifyCutOffTimeStamp = DateTime.UtcNow.AddMilliseconds(millisecondsTimeout);
             List<PoolItem> reverifiedItems = new List<PoolItem>(count);
@@ -409,8 +416,11 @@ namespace Neo.Ledger
             // Since unverifiedSortedTxPool is ordered in an ascending manner, we take from the end.
             foreach (PoolItem item in unverifiedSortedTxPool.Reverse().Take(count))
             {
-                if (item.Tx.Reverify(snapshot, _unsortedTransactions.Select(p => p.Value.Tx)))
+                if (item.Tx.VerifyForEachBlock(snapshot, SendersFeeMonitor.GetSenderFee(item.Tx.Sender)) == RelayResultReason.Succeed)
+                {
                     reverifiedItems.Add(item);
+                    SendersFeeMonitor.AddSenderFee(item.Tx);
+                }
                 else // Transaction no longer valid -- it will be removed from unverifiedTxPool.
                     invalidItems.Add(item);
 
@@ -420,9 +430,8 @@ namespace Neo.Ledger
             _txRwLock.EnterWriteLock();
             try
             {
-                int blocksTillRebroadcast = Object.ReferenceEquals(unverifiedSortedTxPool, _sortedTransactions)
-                    ? BlocksTillRebroadcastHighPriorityPoolTx : BlocksTillRebroadcastLowPriorityPoolTx;
-
+                int blocksTillRebroadcast = BlocksTillRebroadcast;
+                // Increases, proportionally, blocksTillRebroadcast if mempool has more items than threshold bigger RebroadcastMultiplierThreshold
                 if (Count > RebroadcastMultiplierThreshold)
                     blocksTillRebroadcast = blocksTillRebroadcast * Count / RebroadcastMultiplierThreshold;
 
@@ -440,6 +449,8 @@ namespace Neo.Ledger
                             item.LastBroadcastTimestamp = DateTime.UtcNow;
                         }
                     }
+                    else
+                        SendersFeeMonitor.RemoveSenderFee(item.Tx);
 
                     _unverifiedTransactions.Remove(item.Tx.Hash);
                     unverifiedSortedTxPool.Remove(item);
@@ -469,11 +480,10 @@ namespace Neo.Ledger
         ///
         /// Note: this must only be called from a single thread (the Blockchain actor)
         /// </summary>
-        /// <param name="maxToVerify">Max transactions to reverify, the value passed should be >=2. If 1 is passed it
-        ///                           will still potentially use 2.</param>
+        /// <param name="maxToVerify">Max transactions to reverify, the value passed can be >=1</param>
         /// <param name="snapshot">The snapshot to use for verifying.</param>
         /// <returns>true if more unsorted messages exist, otherwise false</returns>
-        internal bool ReVerifyTopUnverifiedTransactionsIfNeeded(int maxToVerify, Snapshot snapshot)
+        internal bool ReVerifyTopUnverifiedTransactionsIfNeeded(int maxToVerify, StoreView snapshot)
         {
             if (Blockchain.Singleton.Height < Blockchain.Singleton.HeaderHeight)
                 return false;

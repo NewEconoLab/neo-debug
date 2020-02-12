@@ -1,14 +1,14 @@
 using Neo.Ledger;
-using Neo.VM;
+using Neo.VM.Types;
 using System.Collections.Generic;
 
 namespace Neo.SmartContract.Iterators
 {
     internal class StorageIterator : IIterator
     {
-        private readonly IEnumerator<KeyValuePair<StorageKey, StorageItem>> enumerator;
+        private readonly IEnumerator<(StorageKey Key, StorageItem Value)> enumerator;
 
-        public StorageIterator(IEnumerator<KeyValuePair<StorageKey, StorageItem>> enumerator)
+        public StorageIterator(IEnumerator<(StorageKey, StorageItem)> enumerator)
         {
             this.enumerator = enumerator;
         }
@@ -18,7 +18,7 @@ namespace Neo.SmartContract.Iterators
             enumerator.Dispose();
         }
 
-        public StackItem Key()
+        public PrimitiveType Key()
         {
             return enumerator.Current.Key.Key;
         }

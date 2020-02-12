@@ -1,9 +1,14 @@
 using Neo.Ledger;
 using Neo.Network.P2P.Payloads;
 using Neo.Persistence;
+using Neo.SmartContract.Dump;
 using Neo.VM;
+using Neo.VM.Types;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using Array = System.Array;
 
 namespace Neo.SmartContract
 {
@@ -20,15 +25,15 @@ namespace Neo.SmartContract
 
         public TriggerType Trigger { get; }
         public IVerifiable ScriptContainer { get; }
-        public Snapshot Snapshot { get; }
+        public StoreView Snapshot { get; }
         public long GasConsumed { get; private set; } = 0;
         public UInt160 CurrentScriptHash => CurrentContext?.GetState<ExecutionContextState>().ScriptHash;
-        public UInt160 CallingScriptHash => InvocationStack.Count > 1 ? InvocationStack.Peek(1).GetState<ExecutionContextState>().ScriptHash : null;
+        public UInt160 CallingScriptHash => CurrentContext?.GetState<ExecutionContextState>().CallingScriptHash;
         public UInt160 EntryScriptHash => EntryContext?.GetState<ExecutionContextState>().ScriptHash;
         public IReadOnlyList<NotifyEventArgs> Notifications => notifications;
         internal Dictionary<UInt160, int> InvocationCounter { get; } = new Dictionary<UInt160, int>();
 
-        public ApplicationEngine(TriggerType trigger, IVerifiable container, Snapshot snapshot, long gas, bool testMode = false)
+        public ApplicationEngine(TriggerType trigger, IVerifiable container, StoreView snapshot, long gas, bool testMode = false)
         {
             this.gas_amount = GasFree + gas;
             this.testMode = testMode;
@@ -53,12 +58,16 @@ namespace Neo.SmartContract
         {
             // Set default execution context state
 
-            context.SetState(new ExecutionContextState()
-            {
-                ScriptHash = ((byte[])context.Script).ToScriptHash()
-            });
+            context.GetState<ExecutionContextState>().ScriptHash ??= ((byte[])context.Script).ToScriptHash();
 
             base.LoadContext(context);
+        }
+
+        public ExecutionContext LoadScript(Script script, CallFlags callFlags, int rvcount = -1)
+        {
+            ExecutionContext context = LoadScript(script, rvcount);
+            context.GetState<ExecutionContextState>().CallFlags = callFlags;
+            return context;
         }
 
         public override void Dispose()
@@ -83,7 +92,7 @@ namespace Neo.SmartContract
             return AddGas(OpCodePrices[CurrentContext.CurrentInstruction.OpCode]);
         }
 
-        private static Block CreateDummyBlock(Snapshot snapshot)
+        private static Block CreateDummyBlock(StoreView snapshot)
         {
             var currentBlock = snapshot.Blocks[snapshot.CurrentBlockHash];
             return new Block
@@ -96,15 +105,15 @@ namespace Neo.SmartContract
                 NextConsensus = currentBlock.NextConsensus,
                 Witness = new Witness
                 {
-                    InvocationScript = new byte[0],
-                    VerificationScript = new byte[0]
+                    InvocationScript = Array.Empty<byte>(),
+                    VerificationScript = Array.Empty<byte>()
                 },
                 ConsensusData = new ConsensusData(),
                 Transactions = new Transaction[0]
             };
         }
 
-        public static ApplicationEngine Run(byte[] script, Snapshot snapshot,
+        public static ApplicationEngine Run(byte[] script, StoreView snapshot,
             IVerifiable container = null, Block persistingBlock = null, bool testMode = false, long extraGAS = default)
         {
             snapshot.PersistingBlock = persistingBlock ?? snapshot.PersistingBlock ?? CreateDummyBlock(snapshot);
@@ -116,9 +125,84 @@ namespace Neo.SmartContract
 
         public static ApplicationEngine Run(byte[] script, IVerifiable container = null, Block persistingBlock = null, bool testMode = false, long extraGAS = default)
         {
-            using (Snapshot snapshot = Blockchain.Singleton.GetSnapshot())
+            using (SnapshotView snapshot = Blockchain.Singleton.GetSnapshot())
             {
                 return Run(script, snapshot, container, persistingBlock, testMode, extraGAS);
+            }
+        }
+        public DumpInfo DumpInfo
+        {
+            get;
+            private set;
+        }
+
+        public void BeginDebug()
+        {//打开Log
+            this.DumpInfo = new DumpInfo();
+        }
+
+        protected override void ExecuteNext()
+        {
+            OpCode curOpcode = CurrentContext.CurrentInstruction.OpCode;
+            uint tokenU32 = curOpcode == OpCode.SYSCALL ? CurrentContext.CurrentInstruction.TokenU32 : 0;
+            if (this.DumpInfo != null)
+            {
+                this.DumpInfo.NextOp(CurrentContext.InstructionPointer, curOpcode,tokenU32);
+                this.CurrentContext.EvaluationStack.ClearRecord();
+            }
+            base.ExecuteNext();
+            if (DumpInfo != null && this.CurrentContext != null)
+            {
+                var EvaluationStackRec = this.CurrentContext.EvaluationStack;
+                StackItem result = null;
+                EvaluationStack.Op[] record = EvaluationStackRec.record.ToArray();
+                var ltype = EvaluationStackRec.GetLastRecordType();
+
+                if (ltype == EvaluationStack.OpType.Push)
+                {
+                    result = EvaluationStackRec.PeekWithoutLog();
+                }
+                else if (ltype == EvaluationStack.OpType.Insert)
+                {
+                    result = EvaluationStackRec.PeekWithoutLog(EvaluationStackRec.record.Last().ind);
+                }
+                else if (ltype == EvaluationStack.OpType.Set)
+                {
+                    result = EvaluationStackRec.PeekWithoutLog(EvaluationStackRec.record.Last().ind);
+                }
+                else if (ltype == EvaluationStack.OpType.Peek)
+                {
+                    result = EvaluationStackRec.PeekWithoutLog();
+                }
+                LogResult(curOpcode, record, result);
+            }
+        }
+
+        public override void SetParam(OpCode opcode, byte[] opdata)
+        {
+            if (this.DumpInfo != null)
+                this.DumpInfo.SetParam(opcode, opdata);
+        }
+
+        public override void LogScript(byte[] script)
+        {
+            if (this.DumpInfo != null)
+            {
+                var hash = script.ToScriptHash().ToString();
+                this.DumpInfo.LoadScript(hash);
+            }
+            base.LogScript(script);
+        }
+
+        private void LogResult(VM.OpCode nextOpcode, EvaluationStack.Op[] records, StackItem lastrecord)
+        {
+            if (records != null && records.Length > 0)
+            {
+                this.DumpInfo.OPStackRecord(records.ToArray());
+            }
+            if (lastrecord != null)
+            {
+                this.DumpInfo.OpResult(lastrecord);
             }
         }
 
@@ -133,6 +217,20 @@ namespace Neo.SmartContract
             NotifyEventArgs notification = new NotifyEventArgs(ScriptContainer, script_hash, state);
             Notify?.Invoke(this, notification);
             notifications.Add(notification);
+        }
+
+        public bool TryPop(out string s)
+        {
+            if (TryPop(out ReadOnlySpan<byte> b))
+            {
+                s = Encoding.UTF8.GetString(b);
+                return true;
+            }
+            else
+            {
+                s = default;
+                return false;
+            }
         }
     }
 }

@@ -46,6 +46,20 @@ namespace Neo.SmartContract
             };
         }
 
+        /// <summary>
+        /// Construct special Contract with empty Script, will get the Script with scriptHash from blockchain when doing the Verify
+        /// verification = snapshot.Contracts.TryGet(hashes[i])?.Script;
+        /// </summary>
+        public static Contract Create(UInt160 scriptHash, params ContractParameterType[] parameterList)
+        {
+            return new Contract
+            {
+                Script = Array.Empty<byte>(),
+                _scriptHash = scriptHash,
+                ParameterList = parameterList
+            };
+        }
+
         public static Contract CreateMultiSigContract(int m, params ECPoint[] publicKeys)
         {
             return new Contract
@@ -67,7 +81,8 @@ namespace Neo.SmartContract
                     sb.EmitPush(publicKey.EncodePoint(true));
                 }
                 sb.EmitPush(publicKeys.Length);
-                sb.EmitSysCall(InteropService.Neo_Crypto_CheckMultiSig);
+                sb.Emit(OpCode.PUSHNULL);
+                sb.EmitSysCall(InteropService.Crypto.ECDsaCheckMultiSig);
                 return sb.ToArray();
             }
         }
@@ -86,7 +101,8 @@ namespace Neo.SmartContract
             using (ScriptBuilder sb = new ScriptBuilder())
             {
                 sb.EmitPush(publicKey.EncodePoint(true));
-                sb.EmitSysCall(InteropService.Neo_Crypto_CheckSig);
+                sb.Emit(OpCode.PUSHNULL);
+                sb.EmitSysCall(InteropService.Crypto.ECDsaVerify);
                 return sb.ToArray();
             }
         }

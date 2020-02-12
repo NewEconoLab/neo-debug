@@ -27,7 +27,7 @@ namespace Neo.Network.P2P.Payloads
             {
                 if (_hash == null)
                 {
-                    _hash = new UInt256(Crypto.Default.Hash256(this.GetHashData()));
+                    _hash = new UInt256(Crypto.Hash256(this.GetHashData()));
                 }
                 return _hash;
             }
@@ -40,7 +40,7 @@ namespace Neo.Network.P2P.Payloads
             sizeof(ulong) +      //Timestamp
             sizeof(uint) +       //Index
             UInt160.Length +     //NextConsensus
-            1 +                  //
+            1 +                  //Witness array count
             Witness.Size;        //Witness   
 
         Witness[] IVerifiable.Witnesses
@@ -59,8 +59,9 @@ namespace Neo.Network.P2P.Payloads
         public virtual void Deserialize(BinaryReader reader)
         {
             ((IVerifiable)this).DeserializeUnsigned(reader);
-            if (reader.ReadByte() != 1) throw new FormatException();
-            Witness = reader.ReadSerializable<Witness>();
+            Witness[] witnesses = reader.ReadSerializableArray<Witness>(1);
+            if (witnesses.Length != 1) throw new FormatException();
+            Witness = witnesses[0];
         }
 
         void IVerifiable.DeserializeUnsigned(BinaryReader reader)
@@ -73,7 +74,7 @@ namespace Neo.Network.P2P.Payloads
             NextConsensus = reader.ReadSerializable<UInt160>();
         }
 
-        UInt160[] IVerifiable.GetScriptHashesForVerifying(Snapshot snapshot)
+        UInt160[] IVerifiable.GetScriptHashesForVerifying(StoreView snapshot)
         {
             if (PrevHash == UInt256.Zero) return new[] { Witness.ScriptHash };
             Header prev_header = snapshot.GetHeader(PrevHash);
@@ -84,7 +85,7 @@ namespace Neo.Network.P2P.Payloads
         public virtual void Serialize(BinaryWriter writer)
         {
             ((IVerifiable)this).SerializeUnsigned(writer);
-            writer.Write((byte)1); writer.Write(Witness);
+            writer.Write(new Witness[] { Witness });
         }
 
         void IVerifiable.SerializeUnsigned(BinaryWriter writer)
@@ -123,7 +124,7 @@ namespace Neo.Network.P2P.Payloads
             Witness = ((JArray)json["witnesses"]).Select(p => Witness.FromJson(p)).FirstOrDefault();
         }
 
-        public virtual bool Verify(Snapshot snapshot)
+        public virtual bool Verify(StoreView snapshot)
         {
             Header prev_header = snapshot.GetHeader(PrevHash);
             if (prev_header == null) return false;
