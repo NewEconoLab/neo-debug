@@ -518,6 +518,7 @@ namespace Neo.Ledger
                         engine.LogScript(tx.Script);
                         engine.LoadScript(tx.Script);
                         state.VMState = engine.Execute();
+                        engine.DumpInfo.Finish(state.VMState);
                         if (state.VMState == VMState.HALT)
                         {
                             engine.Snapshot.Commit();

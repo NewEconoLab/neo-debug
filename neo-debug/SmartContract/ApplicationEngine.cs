@@ -118,8 +118,11 @@ namespace Neo.SmartContract
         {
             snapshot.PersistingBlock = persistingBlock ?? snapshot.PersistingBlock ?? CreateDummyBlock(snapshot);
             ApplicationEngine engine = new ApplicationEngine(TriggerType.Application, container, snapshot, extraGAS, testMode);
+            engine.BeginDebug();
+            engine.LogScript(script);
             engine.LoadScript(script);
-            engine.Execute();
+            var state = engine.Execute();
+            engine.DumpInfo.Finish(state);
             return engine;
         }
 

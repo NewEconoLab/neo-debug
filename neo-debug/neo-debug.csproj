@@ -15,8 +15,8 @@
     <PackageProjectUrl>https://nel.group/</PackageProjectUrl>
     <RepositoryType>Github</RepositoryType>
     <PackageTags>neo debug</PackageTags>
-    <FileVersion>3.0.0.1</FileVersion>
-    <Version>3.0.0.1</Version>
+    <FileVersion>3.0.0.2</FileVersion>
+    <Version>3.0.0.2</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
