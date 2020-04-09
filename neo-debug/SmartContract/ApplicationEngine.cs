@@ -25,6 +25,7 @@ namespace Neo.SmartContract
 
         public TriggerType Trigger { get; }
         public IVerifiable ScriptContainer { get; }
+        public long GasLeft => testMode ? -1 : gas_amount - GasConsumed;
         public StoreView Snapshot { get; }
         public long GasConsumed { get; private set; } = 0;
         public UInt160 CurrentScriptHash => CurrentContext?.GetState<ExecutionContextState>().ScriptHash;
@@ -80,7 +81,7 @@ namespace Neo.SmartContract
 
         protected override bool OnSysCall(uint method)
         {
-            if (!AddGas(InteropService.GetPrice(method, CurrentContext.EvaluationStack)))
+            if (!AddGas(InteropService.GetPrice(method, CurrentContext.EvaluationStack, Snapshot)))
                 return false;
             return InteropService.Invoke(this, method);
         }
