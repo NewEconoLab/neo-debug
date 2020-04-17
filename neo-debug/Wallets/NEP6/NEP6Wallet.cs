@@ -5,8 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Threading.Tasks;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.Tasks;
 using UserWallet = Neo.Wallets.SQLite.UserWallet;
 
 namespace Neo.Wallets.NEP6
@@ -302,14 +302,14 @@ namespace Neo.Wallets.NEP6
             }
         }
 
-        public bool ChangePassword(string password_old, string password_new)
+        public override bool ChangePassword(string oldPassword, string newPassword)
         {
             bool succeed = true;
             lock (accounts)
             {
                 Parallel.ForEach(accounts.Values, (account, state) =>
                 {
-                    if (!account.ChangePasswordPrepare(password_old, password_new))
+                    if (!account.ChangePasswordPrepare(oldPassword, newPassword))
                     {
                         state.Stop();
                         succeed = false;
@@ -321,7 +321,7 @@ namespace Neo.Wallets.NEP6
                 foreach (NEP6Account account in accounts.Values)
                     account.ChangePasswordCommit();
                 if (password != null)
-                    password = password_new;
+                    password = newPassword;
             }
             else
             {

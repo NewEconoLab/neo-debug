@@ -35,7 +35,6 @@ namespace Neo.Ledger
         public static readonly uint[] GenerationAmount = { 6, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
         public static readonly TimeSpan TimePerBlock = TimeSpan.FromMilliseconds(MillisecondsPerBlock);
         public static readonly ECPoint[] StandbyValidators = ProtocolSettings.Default.StandbyValidators.OfType<string>().Select(p => ECPoint.DecodePoint(p.HexToBytes(), ECCurve.Secp256r1)).ToArray();
-
         public static readonly Block GenesisBlock = new Block
         {
             PrevHash = UInt256.Zero,
@@ -305,6 +304,7 @@ namespace Neo.Ledger
             };
             if (relay && rr.Result == VerifyResult.Succeed)
                 system.LocalNode.Tell(new LocalNode.RelayDirectly { Inventory = inventory });
+            Sender.Tell(rr);
             Context.System.EventStream.Publish(rr);
         }
 

@@ -15,8 +15,9 @@
     <PackageProjectUrl>https://nel.group/</PackageProjectUrl>
     <RepositoryType>Github</RepositoryType>
     <PackageTags>neo debug</PackageTags>
-    <FileVersion>3.0.0.2</FileVersion>
-    <Version>3.0.0.2</Version>
+    <FileVersion>3.0.0.3</FileVersion>
+    <Version>3.0.0.3</Version>
+    <VersionSuffix>preview2</VersionSuffix>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -35,6 +36,10 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net47'">
     <PackageReference Include="Replicon.Cryptography.SCrypt" Version="1.1.6.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\neo-vm-debug\neo-vm-debug\neo-vm-debug.csproj" />
   </ItemGroup>
 
 </Project>
