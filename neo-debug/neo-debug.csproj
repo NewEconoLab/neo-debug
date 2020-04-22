@@ -32,14 +32,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="3.0.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="3.0.1" />
     <PackageReference Include="NEL.LLVM" Version="1.0.0" />
+    <PackageReference Include="neo-vm-debug" Version="3.0.0.2" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net47'">
     <PackageReference Include="Replicon.Cryptography.SCrypt" Version="1.1.6.13" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\neo-vm-debug\neo-vm-debug\neo-vm-debug.csproj" />
   </ItemGroup>
 
 </Project>
