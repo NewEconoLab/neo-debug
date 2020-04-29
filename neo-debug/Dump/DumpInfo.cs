@@ -67,22 +67,17 @@ namespace Neo.SmartContract.Dump
             {
                 json.SetDictValue(type, item.ToBoolean().ToString());
             }
-            else if (type == "ByteArray")
+            else if (type == "Buffer")
             {
-                byte[] b;
-                switch (item)
-                {
-                    case PrimitiveType primitive:
-                        b = primitive.Span.ToArray();
-                        break;
-                    case VM.Types.Buffer buffer:
-                        b = buffer.InnerBuffer;
-                        break;
-                    default:
-                        b = default;
-                        break;
-                }
-                json.SetDictValue(type, b.ToHexString());
+                json.SetDictValue(type, (item as VM.Types.Buffer).InnerBuffer.ToHexString());
+            }
+            else if (type == "PrimitiveType")
+            {
+                json.SetDictValue(type, (item as PrimitiveType).Span.ToArray().ToHexString());
+            }
+            else if (type == "ByteString")
+            {
+                json.SetDictValue(type, (item as ByteString).Span.ToArray().ToHexString());
             }
             else if (type == "Integer")
             {
