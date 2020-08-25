@@ -20,6 +20,7 @@ namespace Neo.Persistence
         public override MetaDataCache<HashIndexState> BlockHashIndex { get; }
         public override MetaDataCache<HashIndexState> HeaderHashIndex { get; }
         public override MetaDataCache<ContractIdState> ContractId { get; }
+
         public SnapshotView(IStore store)
         {
             this.snapshot = store.GetSnapshot();

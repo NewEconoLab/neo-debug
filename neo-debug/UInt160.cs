@@ -11,7 +11,7 @@ namespace Neo
     /// It is composed by ulong(64) + ulong(64) + uint(32) = UInt160(160)
     /// </summary>
     [StructLayout(LayoutKind.Explicit, Size = 20)]
-    public class UInt160 : IComparable<UInt160>, IEquatable<UInt160>,ISerializable
+    public class UInt160 : IComparable<UInt160>, IEquatable<UInt160>, ISerializable
     {
         public const int Length = 20;
         public static readonly UInt160 Zero = new UInt160();

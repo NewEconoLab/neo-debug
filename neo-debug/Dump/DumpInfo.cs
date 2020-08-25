@@ -58,14 +58,14 @@ namespace Neo.SmartContract.Dump
                 }
                 else
                 {
-                    //json.SetDictValue(type, (item as VM.Types.InteropInterface).GetType().Name);
-                    json.SetDictValue(type, (item as VM.Types.InteropInterface).GetType());
+                    //json.SetDictValue(type, (item as VM.Types.InteropInterface).GetType());
+                    json.SetDictValue(type, (item as VM.Types.InteropInterface).GetType().Name);
                 }
             }
 
             else if (type == "Boolean")
             {
-                json.SetDictValue(type, item.ToBoolean().ToString());
+                json.SetDictValue(type, item.GetBoolean().ToString());
             }
             else if (type == "Buffer")
             {
@@ -73,15 +73,15 @@ namespace Neo.SmartContract.Dump
             }
             else if (type == "PrimitiveType")
             {
-                json.SetDictValue(type, (item as PrimitiveType).Span.ToArray().ToHexString());
+                json.SetDictValue(type, (item as PrimitiveType).GetSpan().ToArray().ToHexString());
             }
             else if (type == "ByteString")
             {
-                json.SetDictValue(type, (item as ByteString).Span.ToArray().ToHexString());
+                json.SetDictValue(type, (item as ByteString).GetSpan().ToArray().ToHexString());
             }
             else if (type == "Integer")
             {
-                json.SetDictValue(type, (item as PrimitiveType).ToBigInteger().ToString());
+                json.SetDictValue(type, (item as Integer).GetInteger().ToString());
             }
             else if (item is VM.Types.Array)//item is VM.Types.Struct || 是struct 一定是array
             {
@@ -175,20 +175,17 @@ namespace Neo.SmartContract.Dump
                 curScript = curOp.subScript;
             }
         }
-
         public void NextOp(int addr, VM.OpCode op,uint tokenU32)
         {
             LogOp _op = new LogOp(addr, op);
             curScript.ops.Add(_op);
             curOp = _op;
-            if (op == VM.OpCode.RET || (op == VM.OpCode.SYSCALL && tokenU32 == InteropService.Contract.Call.Hash))
+            if (op == VM.OpCode.RET || (op == VM.OpCode.SYSCALL && (tokenU32 == ApplicationEngine.System_Contract_Call.Hash || tokenU32 == ApplicationEngine.System_Contract_CallEx.Hash)))
             {
-
                 if (curScript.parent != null)
                     curScript = curScript.parent;
             }
         }
-
         public void SetParam(VM.OpCode _op, byte[] data)
         {
             var op = curScript.ops.Last();

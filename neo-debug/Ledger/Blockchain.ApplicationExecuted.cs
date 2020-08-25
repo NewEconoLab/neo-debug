@@ -26,7 +26,7 @@ namespace Neo.Ledger
                 GasConsumed = engine.GasConsumed;
                 Stack = engine.ResultStack.ToArray();
                 Notifications = engine.Notifications.ToArray();
-                DumpInfo = engine.DumpInfo?.SaveToString() == null?"": engine.DumpInfo?.SaveToString();
+                DumpInfo = engine.DumpInfo?.SaveToString() == null ? "" : engine.DumpInfo?.SaveToString();
             }
         }
     }
