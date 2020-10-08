@@ -1,16 +1,15 @@
 ﻿using Akka.Actor;
 using Akka.Configuration;
-using MongoDB.Bson;
 using Neo.Cryptography.ECC;
 using Neo.IO;
 using Neo.IO.Actors;
 using Neo.IO.Caching;
-using Neo.IO.Json;
 using Neo.Network.P2P;
 using Neo.Network.P2P.Payloads;
 using Neo.Persistence;
 using Neo.Plugins;
 using Neo.SmartContract;
+using Neo.Trie.MPT;
 using Neo.VM;
 using System;
 using System.Collections.Generic;
@@ -19,12 +18,12 @@ using System.Threading;
 
 namespace Neo.Ledger
 {
-    public sealed class Blockchain : UntypedActor
+    public sealed partial class Blockchain : UntypedActor
     {
         public class Register { }
-        public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public UInt64 BlockIndex;public bool IsLastInvocationTransaction; }
+        public class ApplicationExecuted { public Transaction Transaction; public ApplicationExecutionResult[] ExecutionResults; public UInt64 BlockIndex; public bool IsLastInvocationTransaction; }
         public class PersistCompleted { public Block Block; }
-        public class DumpInfoExecuted { public UInt256 Hash;public string DumpInfoStr; }
+        public class DumpInfoExecuted { public UInt256 Hash; public string DumpInfoStr; }
         public class Import { public IEnumerable<Block> Blocks; }
         public class ImportCompleted { }
         public class FillMemoryPool { public IEnumerable<Transaction> Transactions; }
@@ -36,6 +35,7 @@ namespace Neo.Ledger
         public static readonly uint[] GenerationAmount = { 8, 7, 6, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
         public static readonly TimeSpan TimePerBlock = TimeSpan.FromSeconds(SecondsPerBlock);
         public static readonly ECPoint[] StandbyValidators = ProtocolSettings.Default.StandbyValidators.OfType<string>().Select(p => ECPoint.DecodePoint(p.HexToBytes(), ECCurve.Secp256r1)).ToArray();
+        public static readonly uint FreeGasChangeHeight = ProtocolSettings.Default.FreeGasChangeHeight;
 
 #pragma warning disable CS0612
         public static readonly RegisterTransaction GoverningToken = new RegisterTransaction
@@ -125,15 +125,14 @@ namespace Neo.Ledger
         private readonly Dictionary<UInt256, Block> block_cache = new Dictionary<UInt256, Block>();
         private readonly Dictionary<uint, LinkedList<Block>> block_cache_unverified = new Dictionary<uint, LinkedList<Block>>();
         internal readonly RelayCache RelayCache = new RelayCache(100);
-        private readonly HashSet<IActorRef> subscribers = new HashSet<IActorRef>();
         private Snapshot currentSnapshot;
 
         public Store Store { get; }
         public MemoryPool MemPool { get; }
         public uint Height => currentSnapshot.Height;
-        public uint HeaderHeight => (uint)header_index.Count - 1;
+        public uint HeaderHeight => currentSnapshot.HeaderHeight;
         public UInt256 CurrentBlockHash => currentSnapshot.CurrentBlockHash;
-        public UInt256 CurrentHeaderHash => header_index[header_index.Count - 1];
+        public UInt256 CurrentHeaderHash => currentSnapshot.CurrentHeaderHash;
 
         private static Blockchain singleton;
         public static Blockchain Singleton
@@ -196,12 +195,6 @@ namespace Neo.Ledger
         {
             if (MemPool.ContainsKey(hash)) return true;
             return Store.ContainsTransaction(hash);
-        }
-
-        private void Distribute(object message)
-        {
-            foreach (IActorRef subscriber in subscribers)
-                subscriber.Tell(message);
         }
 
         public Block GetBlock(UInt256 hash)
@@ -324,7 +317,7 @@ namespace Neo.Ledger
                     block_cache_unverified.Remove(blockToPersist.Index);
                     Persist(blockToPersist);
 
-                    if (blocksPersisted++ < blocksToPersistList.Count - (2 + Math.Max(0,(15 - SecondsPerBlock)))) continue;
+                    if (blocksPersisted++ < blocksToPersistList.Count - (2 + Math.Max(0, (15 - SecondsPerBlock)))) continue;
                     // Empirically calibrated for relaying the most recent 2 blocks persisted with 15s network
                     // Increase in the rate of 1 block per second in configurations with faster blocks
 
@@ -424,20 +417,19 @@ namespace Neo.Ledger
         {
             block_cache.Remove(block.Hash);
             MemPool.UpdatePoolForBlockPersisted(block, currentSnapshot);
-            PersistCompleted completed = new PersistCompleted { Block = block };
-            system.Consensus?.Tell(completed);
-            Distribute(completed);
+            Context.System.EventStream.Publish(new PersistCompleted { Block = block });
+            CheckRootOnBlockPersistCompleted();
         }
 
         protected override void OnReceive(object message)
         {
             switch (message)
             {
-                case Register _:
-                    OnRegister();
-                    break;
                 case Import import:
                     OnImport(import.Blocks);
+                    break;
+                case ImportRoots importRoots:
+                    OnImportRoots(importRoots.Roots);
                     break;
                 case FillMemoryPool fill:
                     OnFillMemoryPool(fill.Transactions);
@@ -451,6 +443,12 @@ namespace Neo.Ledger
                 case Transaction transaction:
                     Sender.Tell(OnNewTransaction(transaction));
                     break;
+                case StateRoot stateRoot:
+                    OnNewStateRoot(stateRoot);
+                    break;
+                case StateRoot[] stateRoots:
+                    OnStateRoots(stateRoots);
+                    break;
                 case ConsensusPayload payload:
                     Sender.Tell(OnNewConsensus(payload));
                     break;
@@ -458,16 +456,7 @@ namespace Neo.Ledger
                     if (MemPool.ReVerifyTopUnverifiedTransactionsIfNeeded(MaxTxToReverifyPerIdle, currentSnapshot))
                         Self.Tell(Idle.Instance, ActorRefs.NoSender);
                     break;
-                case Terminated terminated:
-                    subscribers.Remove(terminated.ActorRef);
-                    break;
             }
-        }
-
-        private void OnRegister()
-        {
-            subscribers.Add(Sender);
-            Context.Watch(Sender);
         }
 
         private void Persist(Block block)
@@ -624,7 +613,8 @@ namespace Neo.Ledger
                                     engine.BeginDebug();
                                 engine.LogScript(tx_invocation.Script);
                                 engine.LoadScript(tx_invocation.Script);
-                                if (engine.Execute())
+                                engine.Execute();
+                                if (!engine.State.HasFlag(VMState.FAULT))
                                 {
                                     engine.Service.Commit();
                                 }
@@ -641,7 +631,7 @@ namespace Neo.Ledger
                                 if (bLog)
                                 {
                                     //存dumpinfo
-                                    Plugin.RecordToMongo(new DumpInfoExecuted() { Hash = tx.Hash,DumpInfoStr = engine.DumpInfo.SaveToString()});
+                                    Plugin.RecordToMongo(new DumpInfoExecuted() { Hash = tx.Hash, DumpInfoStr = engine.DumpInfo.SaveToString() });
                                     //else
                                     //{
                                     //    string filename = System.IO.Path.Combine(SmartContract.Debug.DumpInfo.Path, tx.Hash.ToString() + ".llvmhex.txt");
@@ -661,15 +651,13 @@ namespace Neo.Ledger
                             BlockIndex = block.Index,
                             IsLastInvocationTransaction = tx.Hash == lastTransaction.Hash
                         };
+                        Context.System.EventStream.Publish(application_executed);
 
                         //存application
                         Plugin.RecordToMongo(application_executed);
-
-                        Distribute(application_executed);
                         all_application_executed.Add(application_executed);
                     }
                 }
-
                 snapshot.BlockHashIndex.GetAndChange().Hash = block.Hash;
                 snapshot.BlockHashIndex.GetAndChange().Index = block.Index;
                 if (block.Index == header_index.Count)
@@ -679,7 +667,7 @@ namespace Neo.Ledger
                     snapshot.HeaderHashIndex.GetAndChange().Index = block.Index;
                 }
                 //存block
-                Plugin.RecordToMongo(new PersistCompleted() { Block = block});
+                Plugin.RecordToMongo(new PersistCompleted() { Block = block });
 
                 foreach (IPersistencePlugin plugin in Plugin.PersistencePlugins)
                     plugin.OnPersist(snapshot, all_application_executed);
@@ -704,6 +692,7 @@ namespace Neo.Ledger
                 }
                 if (commitExceptions != null) throw new AggregateException(commitExceptions);
             }
+            PersistLocalStateRoot();
             UpdateCurrentSnapshot();
             OnPersistCompleted(block);
         }
@@ -799,12 +788,14 @@ namespace Neo.Ledger
         {
         }
 
-        protected override bool IsHighPriority(object message)
+        internal protected override bool IsHighPriority(object message)
         {
             switch (message)
             {
                 case Header[] _:
                 case Block _:
+                case StateRoot _:
+                case StateRoot[] _:
                 case ConsensusPayload _:
                 case Terminated _:
                     return true;

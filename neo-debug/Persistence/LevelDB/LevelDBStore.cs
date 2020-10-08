@@ -23,18 +23,17 @@ namespace Neo.Persistence.LevelDB
             this.dumpInfo_onlylocal = _dumpOnlyLocal;
             this.dumpInfo_splitcount = _dumpInfo_splitcount;
             this.dumpInfo_splitindex = _dumpInfo_splitindex;
-            
+
             if (string.IsNullOrEmpty(SmartContract.Debug.DumpInfo.Path) == false)
             {
                 if (System.IO.Directory.Exists(SmartContract.Debug.DumpInfo.Path) == false)
                     System.IO.Directory.CreateDirectory(SmartContract.Debug.DumpInfo.Path);
-            
+
             }
             else
             {
                 SmartContract.Debug.DumpInfo.Path = null;
             }
-
             this.db = DB.Open(path, new Options { CreateIfMissing = true });
             if (db.TryGet(ReadOptions.Default, SliceBuilder.Begin(Prefixes.SYS_Version), out Slice value) && Version.TryParse(value.ToString(), out Version version) && version >= Version.Parse("2.9.1"))
                 return;
@@ -55,6 +54,7 @@ namespace Neo.Persistence.LevelDB
         {
             db.Dispose();
         }
+
         public override byte[] Get(byte prefix, byte[] key)
         {
             if (!db.TryGet(ReadOptions.Default, SliceBuilder.Begin(prefix).Add(key), out Slice slice))
@@ -97,6 +97,11 @@ namespace Neo.Persistence.LevelDB
             return new DbCache<StorageKey, StorageItem>(db, null, null, Prefixes.ST_Storage);
         }
 
+        public override DataCache<UInt32Wrapper, StateRootState> GetStateRoots()
+        {
+            return new DbCache<UInt32Wrapper, StateRootState>(db, null, null, Prefixes.ST_StateRoot);
+        }
+
         public override DataCache<UInt256, TransactionState> GetTransactions()
         {
             return new DbCache<UInt256, TransactionState>(db, null, null, Prefixes.DATA_Transaction);
@@ -130,6 +135,11 @@ namespace Neo.Persistence.LevelDB
         public override MetaDataCache<HashIndexState> GetHeaderHashIndex()
         {
             return new DbMetaDataCache<HashIndexState>(db, null, null, Prefixes.IX_CurrentHeader);
+        }
+
+        public override MetaDataCache<RootHashIndex> GetStateRootHashIndex()
+        {
+            return new DbMetaDataCache<RootHashIndex>(db, null, null, Prefixes.IX_CurrentStateRoot);
         }
 
         public override void Put(byte prefix, byte[] key, byte[] value)

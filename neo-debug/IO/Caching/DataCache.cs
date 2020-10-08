@@ -15,7 +15,7 @@ namespace Neo.IO.Caching
             public TrackState State;
         }
 
-        public readonly Dictionary<TKey, Trackable> dictionary = new Dictionary<TKey, Trackable>();
+        private readonly Dictionary<TKey, Trackable> dictionary = new Dictionary<TKey, Trackable>();
 
         public TValue this[TKey key]
         {
@@ -60,9 +60,7 @@ namespace Neo.IO.Caching
 
         protected abstract void AddInternal(TKey key, TValue value);
 
-        public abstract void Commit(UInt64 height, EnumDataTpye enumDataTpye = EnumDataTpye.native);
-
-        protected virtual void Commit()
+        public virtual void Commit()
         {
             foreach (Trackable trackable in GetChangeSet())
                 switch (trackable.State)

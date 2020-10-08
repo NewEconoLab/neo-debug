@@ -9,6 +9,7 @@ namespace Neo.Consensus
 {
     public interface IConsensusContext : IDisposable, ISerializable
     {
+
         //public const uint Version = 0;
         UInt256 PrevHash { get; }
         uint BlockIndex { get; }
@@ -24,25 +25,32 @@ namespace Neo.Consensus
         ConsensusPayload[] PreparationPayloads { get; set; }
         ConsensusPayload[] CommitPayloads { get; set; }
         ConsensusPayload[] ChangeViewPayloads { get; set; }
+        Dictionary<ECPoint, int> LastSeenMessage { get; set; }
         Block Block { get; set; }
         Snapshot Snapshot { get; }
 
+        StateRoot CreateStateRoot();
         Block CreateBlock();
 
-        //void Dispose();
+        bool Load();
 
-        ConsensusPayload MakeChangeView(byte newViewNumber);
+        ConsensusPayload MakeChangeView();
 
         ConsensusPayload MakeCommit();
+        StateRoot MakeStateRoot();
 
         Block MakeHeader();
 
         ConsensusPayload MakePrepareRequest();
+
+        ConsensusPayload MakeRecoveryRequest();
 
         ConsensusPayload MakeRecoveryMessage();
 
         ConsensusPayload MakePrepareResponse();
 
         void Reset(byte viewNumber);
+
+        void Save();
     }
 }

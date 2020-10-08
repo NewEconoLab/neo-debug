@@ -2,8 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <Version>2.10.0.1</Version>
-    <LangVersion>7.3</LangVersion>
+    <Version>2.12.2</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -24,8 +23,14 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="2.2.0" />
     <PackageReference Include="NEL.LLVM" Version="1.0.0" />
     <PackageReference Include="NEL.Simple.SDK" Version="1.0.2" />
-    <PackageReference Include="neo-vm-debug" Version="2.4.0.1" />
     <PackageReference Include="System.Text.Encodings.Web" Version="4.5.0" />
   </ItemGroup>
-
+  
+  <ItemGroup Condition="'$(TargetFramework)' == 'net47'">
+    <PackageReference Include="Replicon.Cryptography.SCrypt" Version="1.1.6.13" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\neo-vm-debug\neo-vm-debug\neo-vm-debug.csproj" />
+  </ItemGroup>
 </Project>

@@ -13,27 +13,22 @@ namespace Neo.SmartContract.Iterators
             this.second = second;
         }
 
-        public void Dispose()
-        {
-            first.Dispose();
-            second.Dispose();
-        }
-
-        public StackItem Key()
-        {
-            return current.Key();
-        }
+        public StackItem Key() => current.Key();
+        public StackItem Value() => current.Value();
 
         public bool Next()
         {
             if (current.Next()) return true;
+
             current = second;
             return current.Next();
         }
 
-        public StackItem Value()
+
+        public void Dispose()
         {
-            return current.Value();
+            first.Dispose();
+            second.Dispose();
         }
     }
 }

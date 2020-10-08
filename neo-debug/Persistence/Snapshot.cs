@@ -12,7 +12,7 @@ namespace Neo.Persistence
 {
     public abstract class Snapshot : IDisposable, IPersistence, IScriptTable
     {
-        public Block PersistingBlock { get; set; }
+        public Block PersistingBlock { get; internal set; }
         public abstract DataCache<UInt256, BlockState> Blocks { get; }
         public abstract DataCache<UInt256, TransactionState> Transactions { get; }
         public abstract DataCache<UInt160, AccountState> Accounts { get; }
@@ -22,13 +22,16 @@ namespace Neo.Persistence
         public abstract DataCache<UInt256, AssetState> Assets { get; }
         public abstract DataCache<UInt160, ContractState> Contracts { get; }
         public abstract DataCache<StorageKey, StorageItem> Storages { get; }
+        public abstract DataCache<UInt32Wrapper, StateRootState> StateRoots { get; }
         public abstract DataCache<UInt32Wrapper, HeaderHashList> HeaderHashList { get; }
         public abstract MetaDataCache<ValidatorsCountState> ValidatorsCount { get; }
         public abstract MetaDataCache<HashIndexState> BlockHashIndex { get; }
         public abstract MetaDataCache<HashIndexState> HeaderHashIndex { get; }
+        public abstract MetaDataCache<RootHashIndex> StateRootHashIndex { get; }
 
         public uint Height => BlockHashIndex.Get().Index;
         public uint HeaderHeight => HeaderHashIndex.Get().Index;
+        public long StateHeight => StateRootHashIndex.Get().Index;
         public UInt256 CurrentBlockHash => BlockHashIndex.Get().Hash;
         public UInt256 CurrentHeaderHash => HeaderHashIndex.Get().Hash;
 
@@ -125,19 +128,21 @@ namespace Neo.Persistence
             Accounts.DeleteWhere((k, v) => !v.IsFrozen && v.Votes.Length == 0 && v.Balances.All(p => p.Value <= Fixed8.Zero));
             UnspentCoins.DeleteWhere((k, v) => v.Items.All(p => p.HasFlag(CoinState.Spent)));
             SpentCoins.DeleteWhere((k, v) => v.Items.Count == 0);
-            Blocks.Commit(Height);
-            Transactions.Commit(Height);
-            Accounts.Commit(Height);
-            UnspentCoins.Commit(Height);
-            SpentCoins.Commit(Height);
-            Validators.Commit(Height);
-            Assets.Commit(Height);
-            Contracts.Commit(Height);
-            Storages.Commit(Height);
-            HeaderHashList.Commit(Height);
-            ValidatorsCount.Commit(Height);
-            BlockHashIndex.Commit(Height);
-            HeaderHashIndex.Commit(Height);
+            Blocks.Commit();
+            Transactions.Commit();
+            Accounts.Commit();
+            UnspentCoins.Commit();
+            SpentCoins.Commit();
+            Validators.Commit();
+            Assets.Commit();
+            Contracts.Commit();
+            Storages.Commit();
+            StateRoots.Commit();
+            HeaderHashList.Commit();
+            ValidatorsCount.Commit();
+            BlockHashIndex.Commit();
+            HeaderHashIndex.Commit();
+            StateRootHashIndex.Commit();
         }
 
         public virtual void Dispose()
@@ -245,7 +250,7 @@ namespace Neo.Persistence
             }
             int count = (int)snapshot.ValidatorsCount.Get().Votes.Select((p, i) => new
             {
-                Count = i,
+                Count = i + 1,
                 Votes = p
             }).Where(p => p.Votes > Fixed8.Zero).ToArray().WeightedFilter(0.25, 0.75, p => p.Votes.GetData(), (p, w) => new
             {

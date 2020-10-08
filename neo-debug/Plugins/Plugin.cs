@@ -1,6 +1,5 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Neo.Network.P2P.Payloads;
-using Neo.Persistence;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,6 +18,7 @@ namespace Neo.Plugins
         internal static readonly List<IPolicyPlugin> Policies = new List<IPolicyPlugin>();
         internal static readonly List<IRpcPlugin> RpcPlugins = new List<IRpcPlugin>();
         internal static readonly List<IPersistencePlugin> PersistencePlugins = new List<IPersistencePlugin>();
+        internal static readonly List<IP2PPlugin> P2PPlugins = new List<IP2PPlugin>();
         internal static readonly List<IMemoryPoolTxObserverPlugin> TxObserverPlugins = new List<IMemoryPoolTxObserverPlugin>();
 
         private static readonly string pluginsPath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "Plugins");
@@ -28,7 +28,6 @@ namespace Neo.Plugins
         private static int suspend = 0;
 
         protected static NeoSystem System { get; private set; }
-        protected static  Store  Store{ get; private set; }
         public virtual string Name => GetType().Name;
         public virtual Version Version => GetType().Assembly.GetName().Version;
         public virtual string ConfigFile => Path.Combine(pluginsPath, GetType().Assembly.GetName().Name, "config.json");
@@ -55,7 +54,9 @@ namespace Neo.Plugins
             Plugins.Add(this);
             if (this is IRestorePlugin restore) Restores.Add(restore);
             if (this is IRecordPlugin record) Records.Add(record);
+
             if (this is ILogPlugin logger) Loggers.Add(logger);
+            if (this is IP2PPlugin p2p) P2PPlugins.Add(p2p);
             if (this is IPolicyPlugin policy) Policies.Add(policy);
             if (this is IRpcPlugin rpc) RpcPlugins.Add(rpc);
             if (this is IPersistencePlugin persistence) PersistencePlugins.Add(persistence);
@@ -71,22 +72,23 @@ namespace Neo.Plugins
                     return false;
             return true;
         }
-
         public static bool RecordToMongo(object message)
         {
             foreach (IRecordPlugin plugin in Records)
                 plugin.Record(message);
             return true;
         }
-
         public static void StartRestore()
         {
             foreach (IRestorePlugin plugin in Restores)
                 plugin.Restore();
         }
 
-
         public abstract void Configure();
+
+        protected virtual void OnPluginsLoaded()
+        {
+        }
 
         private static void ConfigWatcher_Changed(object sender, FileSystemEventArgs e)
         {
@@ -110,13 +112,12 @@ namespace Neo.Plugins
         {
             return new ConfigurationBuilder().AddJsonFile(ConfigFile, optional: true).Build().GetSection("PluginConfiguration");
         }
-
         /// <summary>
         /// 有些插件需要预先加载配置，原本的策略是先加载插件再读取配置
         /// </summary>
-        internal static void LoadNELPlugins(Store store)
+        internal static void LoadNELPlugins(NeoSystem system)
         {
-            Store = store;
+            System = system;
             if (!Directory.Exists(nelPluginsPath)) return;
             foreach (string filename in Directory.EnumerateFiles(nelPluginsPath, "*.dll", SearchOption.TopDirectoryOnly))
             {
@@ -138,14 +139,14 @@ namespace Neo.Plugins
                 }
             }
         }
-
         internal static void LoadPlugins(NeoSystem system)
         {
             System = system;
             if (!Directory.Exists(pluginsPath)) return;
             foreach (string filename in Directory.EnumerateFiles(pluginsPath, "*.dll", SearchOption.TopDirectoryOnly))
             {
-                Assembly assembly = Assembly.LoadFile(filename);
+                var file = File.ReadAllBytes(filename);
+                Assembly assembly = Assembly.Load(file);
                 foreach (Type type in assembly.ExportedTypes)
                 {
                     if (!type.IsSubclassOf(typeof(Plugin))) continue;
@@ -162,6 +163,12 @@ namespace Neo.Plugins
                     }
                 }
             }
+        }
+
+        internal static void NotifyPluginsLoadedAfterSystemConstructed()
+        {
+            foreach (var plugin in Plugins)
+                plugin.OnPluginsLoaded();
         }
 
         protected void Log(string message, LogLevel level = LogLevel.Info)

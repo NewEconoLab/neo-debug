@@ -33,13 +33,12 @@ namespace Neo
 
         public NeoSystem(Store store)
         {
-            Plugin.LoadNELPlugins(store);
-            Plugin.StartRestore();
             this.store = store;
+            Plugin.LoadPlugins(this);
             this.Blockchain = ActorSystem.ActorOf(Ledger.Blockchain.Props(this, store));
             this.LocalNode = ActorSystem.ActorOf(Network.P2P.LocalNode.Props(this));
             this.TaskManager = ActorSystem.ActorOf(Network.P2P.TaskManager.Props(this));
-            Plugin.LoadPlugins(this);
+            Plugin.NotifyPluginsLoadedAfterSystemConstructed();
         }
 
         public void Dispose()
@@ -76,14 +75,15 @@ namespace Neo
         }
 
         public void StartNode(int port = 0, int wsPort = 0, int minDesiredConnections = Peer.DefaultMinDesiredConnections,
-            int maxConnections = Peer.DefaultMaxConnections)
+            int maxConnections = Peer.DefaultMaxConnections, int maxConnectionsPerAddress = 3)
         {
             start_message = new Peer.Start
             {
                 Port = port,
                 WsPort = wsPort,
                 MinDesiredConnections = minDesiredConnections,
-                MaxConnections = maxConnections
+                MaxConnections = maxConnections,
+                MaxConnectionsPerAddress = maxConnectionsPerAddress
             };
             if (!suspend)
             {
@@ -93,10 +93,10 @@ namespace Neo
         }
 
         public void StartRpc(IPAddress bindAddress, int port, Wallet wallet = null, string sslCert = null, string password = null,
-            string[] trustedAuthorities = null, Fixed8 maxGasInvoke = default(Fixed8))
+            string[] trustedAuthorities = null, Fixed8 extraGasInvoke = default, int maxConcurrentConnections = 40)
         {
-            RpcServer = new RpcServer(this, wallet, maxGasInvoke);
-            RpcServer.Start(bindAddress, port, sslCert, password, trustedAuthorities);
+            RpcServer = new RpcServer(this, wallet, extraGasInvoke);
+            RpcServer.Start(bindAddress, port, sslCert, password, trustedAuthorities, maxConcurrentConnections);
         }
 
         internal void SuspendNodeStartup()
